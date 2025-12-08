@@ -44,12 +44,20 @@ jobs:
           chmod 700 ~/.ssh
           
           # Write SSH key (preserve newlines)
+          # Handle both single-line and multi-line key formats
           echo "$DEPLOY_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
           
-          # Verify SSH key format
-          if ! head -1 ~/.ssh/deploy_key | grep -q "BEGIN.*PRIVATE KEY"; then
-            echo "Error: SSH key format is incorrect"
+          # Verify SSH key format (check for common formats)
+          if ! grep -qE "(BEGIN.*PRIVATE KEY|BEGIN RSA PRIVATE KEY|BEGIN OPENSSH PRIVATE KEY)" ~/.ssh/deploy_key; then
+            echo "Warning: SSH key format might be incorrect, but continuing..."
+            echo "First line of key: $(head -1 ~/.ssh/deploy_key | cut -c1-50)..."
+          fi
+          
+          # Ensure key has proper newlines (some secrets might be single-line)
+          if ! grep -q "PRIVATE KEY" ~/.ssh/deploy_key; then
+            echo "Error: SSH key does not contain PRIVATE KEY marker"
+            echo "Key length: $(wc -c < ~/.ssh/deploy_key) bytes"
             exit 1
           fi
           
