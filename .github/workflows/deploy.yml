@@ -41,8 +41,17 @@ jobs:
         run: |
           # Setup SSH
           mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+          
+          # Write SSH key (preserve newlines)
           echo "$DEPLOY_KEY" > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
+          
+          # Verify SSH key format
+          if ! head -1 ~/.ssh/deploy_key | grep -q "BEGIN.*PRIVATE KEY"; then
+            echo "Error: SSH key format is incorrect"
+            exit 1
+          fi
           
           # Add host to known_hosts
           if [ -n "$DEPLOY_HOST" ]; then
@@ -50,12 +59,26 @@ jobs:
             chmod 644 ~/.ssh/known_hosts
           fi
           
+          # Test SSH connection
+          echo "Testing SSH connection..."
+          ssh -i ~/.ssh/deploy_key \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=~/.ssh/known_hosts \
+            -o ConnectTimeout=10 \
+            "$DEPLOY_USER@$DEPLOY_HOST" "echo 'SSH connection successful'" || {
+            echo "SSH connection failed"
+            exit 1
+          }
+          
           # Define directories
           REMOTE_DIR="/home/ubuntu/inji/server"
           REMOTE_PROJECT_DIR="$REMOTE_DIR/inji-backend"
           
           # Clean remote directory
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$DEPLOY_USER@$DEPLOY_HOST" "rm -rf $REMOTE_DIR && mkdir -p $REMOTE_PROJECT_DIR"
+          ssh -i ~/.ssh/deploy_key \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=~/.ssh/known_hosts \
+            "$DEPLOY_USER@$DEPLOY_HOST" "rm -rf $REMOTE_DIR && mkdir -p $REMOTE_PROJECT_DIR"
           
           # Copy files (IMPORTANT: use trailing slash to copy contents)
           # This ensures src/ folder is copied correctly
@@ -68,17 +91,26 @@ jobs:
             --exclude 'yarn-error.log' \
             --exclude '*.log' \
             --exclude '.github' \
-            -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no" \
+            -e "ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=~/.ssh/known_hosts" \
             ./ "$DEPLOY_USER@$DEPLOY_HOST:$REMOTE_PROJECT_DIR/"
           
           # Verify src directory exists
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$DEPLOY_USER@$DEPLOY_HOST" "test -d $REMOTE_PROJECT_DIR/src && echo '✓ src/ directory exists' || (echo '✗ ERROR: src/ directory missing!' && exit 1)"
+          ssh -i ~/.ssh/deploy_key \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=~/.ssh/known_hosts \
+            "$DEPLOY_USER@$DEPLOY_HOST" "test -d $REMOTE_PROJECT_DIR/src && echo '✓ src/ directory exists' || (echo '✗ ERROR: src/ directory missing!' && exit 1)"
           
           # Remove .git if it exists (shouldn't, but just in case)
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$DEPLOY_USER@$DEPLOY_HOST" "rm -rf $REMOTE_PROJECT_DIR/.git"
+          ssh -i ~/.ssh/deploy_key \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=~/.ssh/known_hosts \
+            "$DEPLOY_USER@$DEPLOY_HOST" "rm -rf $REMOTE_PROJECT_DIR/.git"
           
           # Install dependencies, build and restart on server
-          ssh -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no "$DEPLOY_USER@$DEPLOY_HOST" "cd $REMOTE_PROJECT_DIR && yarn install --production --frozen-lockfile && npx prisma generate && yarn build && yarn start:pm2:prod"
+          ssh -i ~/.ssh/deploy_key \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=~/.ssh/known_hosts \
+            "$DEPLOY_USER@$DEPLOY_HOST" "cd $REMOTE_PROJECT_DIR && yarn install --production --frozen-lockfile && npx prisma generate && yarn build && yarn start:pm2:prod"
           
           echo "✓ Deployment completed successfully"
 
