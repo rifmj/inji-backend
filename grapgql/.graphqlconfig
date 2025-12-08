@@ -1,0 +1,16 @@
+{
+  "name": "Untitled GraphQL Schema",
+  "schemaPath": "schema.graphql",
+  "extensions": {
+    "endpoints": {
+      "Default GraphQL Endpoint": {
+        "url": "https://gql.inji.kz/graphql/",
+        "headers": {
+          "user-agent": "JS GraphQL",
+          "authorization": "JWT aWqfVHuweGJJQgSZsgxKozlc7UECpd"
+        },
+        "introspect": true
+      }
+    }
+  }
+}

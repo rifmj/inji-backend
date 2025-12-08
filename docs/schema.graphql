@@ -1,0 +1,587 @@
+# This file was generated based on ".graphqlconfig". Do not edit manually.
+
+schema {
+    query: Query
+    mutation: Mutation
+}
+
+type Account {
+    connect_url: String
+    country: Int
+    createdAt: String
+    id: ID
+    iso: String
+    manager: Int
+    name: String
+    resident: Int
+    taxNumber: String
+}
+
+type Analytics {
+    payinAnalytics: AnalyticsPeriod
+    payoutAnalytics: AnalyticsPeriod
+}
+
+type AnalyticsItem {
+    byAverage: [Average]
+    byTurnover: [Turnover]
+}
+
+type AnalyticsPeriod {
+    current: AnalyticsItem
+    prev: AnalyticsItem
+}
+
+type Average {
+    _id: ID
+    average: String
+}
+
+type Calculation {
+    info: CalculationInfo
+    list: [CalculationList]
+}
+
+type CalculationInfo {
+    last: String
+    lastAmount: String
+    lastToAccount: String
+    lastToPayout: String
+    next: String
+    nextAmount: String
+    nextToAccount: String
+    nextToPayout: String
+    registryType: String
+}
+
+type CalculationList {
+    amountAccount: String
+    amountPayout: String
+    amountTotal: String
+    date: String
+    period: String
+}
+
+type CardInfo {
+    bank: String
+    bankCountry: String
+    brand: String
+    owner: String
+    pan: String
+}
+
+type Currencies {
+    available: Object
+    current: Currency
+}
+
+type Currency {
+    code: String
+    code_html: String
+    code_number: Int
+    country_id: Int
+    exponent: Int
+    id: ID
+    name: String
+}
+
+type Dictionary {
+    byDate: [DictionaryOption]
+    clearingStatus: [DictionaryOption]
+    filterBy: [DictionaryOption]
+    languages: [DictionaryOption]
+    lifetime: [DictionaryOption]
+    methods: [DictionaryOption]
+    mode: [DictionaryOption]
+    ofdTaxTypes: [DictionaryOption]
+    paymentSystems: [PaymentSystems]
+    paymentType: [DictionaryOption]
+    status: [DictionaryOption]
+    ticketDepartments: [DictionaryOption]
+    ticketStatuses: [DictionaryOption]
+    timezone: [DictionaryOption]
+}
+
+type DictionaryOption {
+    id: ID
+    name: String
+}
+
+type FileOutputType {
+    url: String
+}
+
+type FileUpload {
+    upload: String
+}
+
+type HtmlButton {
+    link: String
+}
+
+type Identificator {
+    id: ID
+}
+
+type InfoRegistry {
+    fingerprint: String
+}
+
+type InvoiceAnswer {
+    link: String
+}
+
+type InvoiceList {
+    clientPhone: String
+    date: String
+    description: String
+    id: ID
+    invoiceAmount: String
+    merchant: String
+    orderID: String
+    status: String
+    user: String
+}
+
+type Manager {
+    email: String
+    mobile: String
+    name: String
+    phone: String
+    skype: String
+}
+
+type Merchant {
+    URLCheck: String
+    URLFailure: String
+    URLMethod: String
+    URLResult: String
+    URLSite: String
+    URLSuccess: String
+    acceptedIn: String
+    acceptedOut: String
+    active: Boolean
+    created_at: String
+    currencies: Currencies
+    email: String
+    helpdeskEmail: String
+    helpdeskPhone: String
+    id: ID
+    isActiveOfd: Int
+    isActiveSmsSender: Int
+    isBlock: Int
+    isExtendOfd: Int
+    isTest: Int
+    linkParams: String
+    logo: String
+    name: String
+    phone: String
+    reports: [Report]
+    secret_key: String
+    secret_key_payout: String
+    siteURL: String
+    slug: String
+    taxType: String
+}
+
+type Message {
+    message: ID
+}
+
+type Mutation {
+    cancelPayment(id: ID): PayDetails
+    clearPayment(amount: Float, id: ID): PayDetails
+    createTicket(attach: String, department: String, merchant: ID, text: String, title: String): TicketID
+    deleteRegistry(id: ID): Status
+    deleteUser(id: ID): [Users]
+    initRegistry(cardMask: String, clearing: String, clientEmail: String, clientPhone: String, createdAt: [String], description: String, direction: String, id: String, limit: Int, merchant: [String], offset: Int, orderBy: [String], orderID: String, payedAt: [String], paymentSystem: String, reference: String, showIncomplete: Boolean, status: String, test: String, timezone: String, turnover: String, type: String): Status
+    revokePayment(amount: Float, id: ID, productsList: [ReceiptProducts]): PayDetails
+    sendMessage(attach: String, id: ID, text: String): Message
+    sendResult(id: ID): PayDetails
+    updateLinkSettings(emailRequired: Boolean, id: ID, orderIdRequired: Boolean, pgParam1: String, pgParam1Required: Boolean, phoneRequired: Boolean): Identificator
+    updateUser(email: String, id: ID, name: String, password: String, permissions: [UpdatePermission], role: ID): [Users]
+    uploadFile(file: Upload, name: String): FileUpload
+}
+
+type PayDetails {
+    amount: String
+    blocked: Int
+    canFullClear: Boolean
+    canPartClear: Boolean
+    cancellable: Boolean
+    cardInfo: CardInfo
+    checkDate: String
+    checkURL: String
+    clearOrCancel: Boolean
+    clientEmail: String
+    clientPhone: String
+    createdAt: String
+    currency: String
+    description: String
+    errorCode: String
+    errorMessage: String
+    expireDate: String
+    failureURL: String
+    failureURLMethod: String
+    firstPayment: Int
+    id: ID
+    ip: String
+    isDisabled: Boolean
+    location: String
+    merchant: ID
+    merchantName: String
+    orderID: String
+    param1: String
+    param2: String
+    param3: String
+    partClearAmount: String
+    paymentDate: String
+    paymentSystem: Int
+    paymentType: String
+    problem: Int
+    productsList: [ProductsList]
+    readyDate: String
+    requestMethod: String
+    resultDate: String
+    resultURL: String
+    revokable: Float
+    revokeDate: String
+    siteURL: String
+    stateURL: String
+    stateURLMethod: String
+    status: String
+    successURL: String
+    successURLMethod: String
+    test: Int
+    type: String
+    updatedAt: String
+}
+
+type Payment {
+    bankAlias: String
+    canFullClear: Boolean
+    cancellable: Boolean
+    clearOrCancel: Boolean
+    clientEmail: String
+    clientPhone: String
+    commission: String
+    createdAt: String
+    currencyCode: String
+    description: String
+    entityName: String
+    firstPayment: Int
+    id: ID
+    merchant: String
+    merchant_id: ID
+    orderID: String
+    panMask: String
+    param1: String
+    param2: String
+    param3: String
+    payedAt: String
+    paymentSystem: String
+    paymentType: String
+    reference: String
+    refundDate: String
+    revokable: Boolean
+    status: String
+    test: String
+    turnover: String
+    type: String
+}
+
+type PaymentScope {
+    acceptedIn: String
+    acceptedOut: String
+    payinFirst: String
+    payinLast: String
+    payouLast: String
+    payoutFirst: String
+}
+
+type PaymentSystems {
+    code: String
+    direction: [String]
+    enabled: Boolean
+    from: String
+    id: ID
+    name: String
+    payment_systems_types_id: Int
+    rate: Float
+    rounding: Int
+    type: String
+}
+
+type PayoutBalance {
+    balance: String
+    name: String
+}
+
+type Permission {
+    group: String
+    label: String
+    name: String
+    pId: ID
+}
+
+type ProductsList {
+    count: String
+    name: String
+    price: String
+    tax_type: String
+}
+
+type QrLink {
+    qrUrl: String
+}
+
+type Query {
+    auth(email: String, host: String, password: String): Status
+    calculations(date: [String], id: ID, limit: Int, offset: Int): Calculation
+    changeLanguage(language: String): Translations
+    dictionary: Dictionary
+    downloadRegistry(fingerprint: String, id: ID): FileOutputType
+    getAnalytics(currency: String, dateA: String, dateZ: String, merchantID: String, prevDateA: String, prevDateZ: String): Analytics
+    getRegistry: RegistryType
+    getTicketNotify: [TicketNotify]
+    htmlButton(currency: String, language: String, merchant: ID, name: String, productsList: [ReceiptProducts], sendCheckOfd: Boolean, total: String): HtmlButton
+    invoice(merchant: ID): Template
+    invoiceList(amount: String, clientPhone: String, date: [String], id: ID, limit: Int, merchant: [String], offset: Int, orderBy: [String], orderID: ID): [InvoiceList]
+    logout: Status
+    messages(id: ID): TicketWithMessages
+    payDetails(id: ID): PayDetails
+    payIn(cardMask: String, clearing: String, clientEmail: String, clientPhone: String, createdAt: [String], description: String, id: String, limit: Int, merchant: [String], offset: Int, orderBy: [String], orderID: String, payedAt: [String], paymentSystem: String, reference: String, showIncomplete: Boolean, status: String, test: String, timezone: String, turnover: String, type: String): [Payment]
+    payOut(cardMask: String, clearing: String, clientEmail: String, clientPhone: String, createdAt: [String], description: String, id: String, limit: Int, merchant: [String], offset: Int, orderBy: [String], orderID: String, payedAt: [String], paymentSystem: String, reference: String, showIncomplete: Boolean, status: String, test: String, timezone: String, turnover: String, type: String): [Payment]
+    paymentScope: PaymentScope
+    qr(id: ID, project: String): QrLink
+    refillLogs(created_at: [String], id: ID, limit: Int, offset: Int, orderBy: [String], sum: Int): [RefillLogs]
+    reset(confirm: String, email: String, password: String, restore: String): Status
+    sendInvoice(amount: String, currency: String, description: String, emailBuyer: String, emailSeller: String, language: String, merchant: ID, messageBody: String, messageSubject: String, orderID: String, paymentLifetime: Int, productsList: [ReceiptProducts], sendCheckOfd: Boolean, sendSms: Boolean, sendToEmail: Boolean, senderName: String, smsMessage: String, smsReceiverPhone: String): InvoiceAnswer
+    testCards: [TestCards]
+    tickets(created: [String], department: String, id: ID, limit: Int, merchant: ID, offset: Int, status: String): [Ticket]
+    transactions(id: ID): [Transaction]
+    updateCommonSettings(email: String, id: ID, name: String, phone: String): Identificator
+    updateSystemSettings(PayDirectionDefaultFilter: String, URLCheck: String, URLFailure: String, URLMethod: String, URLResult: String, URLSite: String, URLSuccess: String, helpdeskEmail: String, helpdeskPhone: String, id: ID): Identificator
+    usersManagement(project: String): UserManagement
+    workflow(project: String): Workflow
+}
+
+type RefillLogs {
+    balance_after: String
+    balance_before: String
+    balance_type: String
+    created_at: String
+    id: ID
+    sum: Float
+}
+
+type RegistryInnerData {
+    message: String
+    percent: Int
+}
+
+type RegistryList {
+    data: [RegistryListData]
+    from: ID
+    to: String
+}
+
+type RegistryListData {
+    data: RegistryInnerData
+    id: ID
+    name: String
+    status_text: String
+}
+
+type RegistryType {
+    list: [RegistryList]
+    registry: InfoRegistry
+}
+
+type Report {
+    email: String
+    period: Int
+}
+
+type Role {
+    label: String
+    name: String
+}
+
+type RoleDict {
+    id: ID
+    name: String
+    role: String
+}
+
+type RouteType {
+    active: Boolean
+    hidden: Boolean
+    icon: String
+    id: String
+    items: [RouteType]
+    page: String
+    route: String
+    title: String
+}
+
+type Status {
+    status: String
+}
+
+type Template {
+    template: TemplateItems
+}
+
+type TemplateItems {
+    amount: String
+    currency: String
+    description: String
+    emailBuyer: String
+    emailSeller: String
+    messageBody: String
+    messageSubject: String
+    orderID: String
+    paymentLifetime: Int
+    senderName: String
+}
+
+type TestCards {
+    brand: String
+    cvv: String
+    expire: String
+    iso: String
+    pan: String
+    secure: String
+}
+
+type Ticket {
+    created: String
+    department: String
+    id: ID
+    status: String
+    title: String
+    updated: String
+}
+
+type TicketID {
+    ticket: ID
+}
+
+type TicketNotify {
+    notseen: String
+    request: String
+    title: String
+}
+
+type TicketWithMessages {
+    id: ID
+    merchant: String
+    messages: Object
+    status: String
+    title: String
+}
+
+type Transaction {
+    date: String
+    duration: String
+    id: ID
+    receiver: [String]
+    request: TransactionRequest
+    response: String
+    sender: [String]
+    status: String
+    url: String
+}
+
+type TransactionRequest {
+    pg_amount: String
+    pg_description: String
+    pg_merchant_id: String
+    pg_order_id: String
+    pg_recurring_profile: String
+    pg_salt: String
+    pg_sig: String
+}
+
+type Translations {
+    language: String
+    translations: Object
+}
+
+type Turnover {
+    _id: ID
+    count: String
+    turnover: String
+}
+
+type User {
+    email: String
+    id: ID
+    name: String
+    permissions: [UserPermissions]
+    phone: String
+    position: String
+    roles: [Role]
+}
+
+type UserManagement {
+    permissions: [Permission]
+    roles: [RoleDict]
+    users: [Users]
+}
+
+type UserPermissions {
+    merchant_id: ID
+    name: String
+}
+
+type Users {
+    email: String
+    id: ID
+    name: String
+    permissions: Object
+    phone: String
+    position: String
+    role: ID
+}
+
+type Workflow {
+    account: Account
+    currentLanguage: String
+    manager: Manager
+    me: User
+    merchant: Merchant
+    merchants: [Merchant]
+    merchantsList: [DictionaryOption]
+    navigator: [[RouteType]]
+    paymentSystems: [PaymentSystems]
+    payout_balance: [PayoutBalance]
+    qrLink: String
+    translations: Object
+}
+
+"Arbitrary object"
+scalar Object
+
+"The `Upload` scalar type represents a file upload."
+scalar Upload
+
+input ReceiptProducts {
+    barcode: String
+    count: String
+    discount: String
+    label: String
+    name: String
+    other: String
+    package_code: String
+    price: String
+    spic: String
+    tax_type: String
+    units: String
+}
+
+input UpdatePermission {
+    merchant_id: ID
+    permission_id: ID
+}

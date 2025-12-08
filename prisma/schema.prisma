@@ -1,0 +1,142 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["referentialIntegrity"]
+}
+
+datasource db {
+  provider             = "postgresql"
+  url                  = env("DATABASE_URL")
+  referentialIntegrity = "prisma"
+}
+
+enum SmsChannel {
+  sms
+  whatsapp
+}
+
+model SmsRequestCode {
+  id String @id @default(cuid())
+
+  phone String
+  value String
+
+  createdAt DateTime
+  expiresAt DateTime
+  channel   SmsChannel?
+}
+
+model CallWaitCode {
+  id String @id @default(cuid())
+
+  userPhone String
+  phone     String
+
+  isConfirmed Boolean @default(false)
+
+  createdAt DateTime
+  expiresAt DateTime
+}
+
+model User {
+  id String @id
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now())
+
+  hashedRefreshToken String?
+
+  phone String @unique
+
+  isActive  Boolean @default(true)
+  isDeleted Boolean @default(false)
+  isBanned  Boolean @default(false)
+
+  sessions Session[]
+}
+
+model Session {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+
+  isRevoked Boolean @default(false)
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+}
+
+model Invoice {
+  id           String   @id
+  createdAt    DateTime @default(now())
+  amount       Float
+  userPhone    String
+  checkoutId   String?
+  status       Int?
+  operationUrl String?
+  referenceId  String?
+  key          String?
+  userComment  String?
+  products     Json?
+  data         Json?
+}
+
+model UserDevice {
+  id        String   @id @default(cuid())
+  pushToken String
+  userId    String
+  deviceId  String
+  isRevoked Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model Product {
+  id        String  @id
+  name      String
+  category  String?
+  barcode   String?
+  isActive  Boolean @default(true)
+  erpId     String?
+  saleorId  String?
+  price     Float?
+  costPrice Float?
+
+  isProcessedDietaGram Boolean @default(false)
+  dietaGram            Json?
+
+  isProcessedGoogle Boolean @default(false)
+  google            Json?
+}
+
+model TelegramAuthRequest {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  hash      String
+  phone     String?
+  data      Json?
+}
+
+model DeliveryEstimate {
+  id            String   @id
+  createdAt     DateTime @default(now())
+  route         Json?
+  selectedClass String?
+  phone         String?
+  serviceLevels Json?
+  data          Json?
+}
+
+model KaspiPaymentRequest {
+  id           String   @id
+  createdAt    DateTime @default(now())
+  userId       String?
+  phone        String?
+  checkoutData Json?
+  amount       Float?
+}
+
+model SavedCard {
+  id           String   @id @default(cuid())
+  createdAt    DateTime @default(now())
+  userId       String
+  cardToken    String
+  cardLastFour String
+}
