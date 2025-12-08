@@ -118,7 +118,7 @@ jobs:
           ssh -i ~/.ssh/deploy_key \
             -o StrictHostKeyChecking=no \
             -o UserKnownHostsFile=~/.ssh/known_hosts \
-            "$DEPLOY_USER@$DEPLOY_HOST" "cd $REMOTE_PROJECT_DIR && yarn install --production --frozen-lockfile && npx prisma generate && yarn build && yarn start:pm2:prod"
+            "$DEPLOY_USER@$DEPLOY_HOST" "cd $REMOTE_PROJECT_DIR && yarn install --frozen-lockfile && npx prisma generate && yarn build && yarn start:pm2:prod"
           
           echo "✓ Deployment completed successfully"
 
