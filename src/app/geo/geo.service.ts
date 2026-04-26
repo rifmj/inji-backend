@@ -1,5 +1,4 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { SearchService } from '../../core/search/search.service';
 import { HttpService } from '@nestjs/axios';
 import { XMLParser } from 'fast-xml-parser';
 import { PrismaService } from '../../core/prisma/prisma.service';
@@ -9,7 +8,6 @@ import { nodeCache } from 'src/core/utils/cache';
 @Injectable()
 export class GeoService {
   constructor(
-    private searchService: SearchService,
     private httpService: HttpService,
     private prismaService: PrismaService,
   ) {}
@@ -101,21 +99,6 @@ export class GeoService {
       };
     };
   } | null> {
-    const q = 'казахстан, уральск, ' + query?.toLowerCase()?.trim();
-
-    // try {
-    //   const data = await this.searchService.client.search({
-    //     index: 'inji-ya-geocoding',
-    //     body: { query: { ids: { values: [q] } } },
-    //   });
-    //
-    //   if (data?.body?.hits?.hits?.length) {
-    //     return data?.body?.hits?.hits?.[0]?._source;
-    //   }
-    // } catch (e) {
-    //   console.info('Cannot search geocode');
-    // }
-
     try {
       const url = `https://geocode-maps.yandex.ru/1.x/?apikey=${
         this.API_KEY
@@ -124,11 +107,6 @@ export class GeoService {
       )}&ll=51.23,51.40&results=100&spn=2.0,2.0&lang=ru_RU`;
       const r = await this.httpService.get(url).toPromise();
       if (r.status === 200) {
-        // try {
-        //   await this.searchService.writeYaGeoCode(q, r.data);
-        // } catch (e) {
-        //   console.info('Cannot write geocode');
-        // }
         return r.data;
       }
       return null;

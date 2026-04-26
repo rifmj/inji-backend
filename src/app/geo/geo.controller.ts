@@ -1,15 +1,9 @@
 import { Controller, Get, Query } from '@nestjs/common';
-import { SearchService } from '../../core/search/search.service';
-import { HttpService } from '@nestjs/axios';
 import { GeoService } from './geo.service';
 
 @Controller('geo')
 export class GeoController {
-  constructor(
-    private searchService: SearchService,
-    private httpService: HttpService,
-    private geoService: GeoService,
-  ) {}
+  constructor(private geoService: GeoService) {}
 
   @Get('info')
   async getInfo() {

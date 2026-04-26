@@ -1,7 +1,6 @@
 import { Module } from '@nestjs/common';
 import { HttpModule } from '@nestjs/axios';
 import { ScheduleModule } from '@nestjs/schedule';
-import { EventEmitterModule } from '@nestjs/event-emitter';
 import { ConfigModule } from '@nestjs/config';
 import configuration from '../../app/config/configuration';
 import * as winston from 'winston';
@@ -28,7 +27,6 @@ const loggerFormat = isLocal()
   imports: [
     HttpModule,
     ScheduleModule.forRoot(),
-    EventEmitterModule.forRoot(),
     WinstonModule.forRoot({
       format: winston.format.json(),
       transports: [new winston.transports.Console()],

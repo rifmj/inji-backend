@@ -6,7 +6,6 @@ import { AppModule } from './app.module';
 import { Logger, VersioningType } from '@nestjs/common';
 
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
-import { isProd } from './core/utils/environment';
 import { ConfigService } from '@nestjs/config';
 
 // import * as session from 'express-session';
@@ -16,18 +15,11 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule);
 
   const configService = app.get(ConfigService);
-  const {
-    port,
-    appVersion,
-    sessionSecret,
-    appName,
-    appDescription,
-    originHost,
-  } = configService.get('common');
+  const { port, appVersion, appName, appDescription } =
+    configService.get('common');
 
   app.enableCors({
     origin: '*',
-    // origin: isProd() ? originHost : '*',
   });
 
   // app.use(compression());

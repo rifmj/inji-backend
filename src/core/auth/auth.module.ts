@@ -7,7 +7,6 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { LoggerService } from '../shared/logger.service';
 import { TelegramModule } from '../../app/messaging/telegram/telegram.module';
 import { SmsModule } from '../../app/messaging/sms/sms.module';
-import { SearchModule } from '../search/search.module';
 
 @Module({
   imports: [
@@ -15,7 +14,6 @@ import { SearchModule } from '../search/search.module';
     PrismaModule,
     SmsModule,
     TelegramModule,
-    SearchModule,
     JwtModule.register({
       secret: process.env.JWT_SECRET,
       signOptions: { expiresIn: '36000s' },

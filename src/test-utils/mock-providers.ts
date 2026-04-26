@@ -2,7 +2,6 @@ import { Provider } from '@nestjs/common';
 import { PrismaService } from '../core/prisma/prisma.service';
 import { LoggerService } from '../core/shared/logger.service';
 import { SaleorService } from '../app/saleor/saleor.service';
-import { SearchService } from '../core/search/search.service';
 
 /** Prisma-like proxy so any `prisma.foo.bar()` resolves to jest mocks. */
 export function createMockPrisma(): Partial<PrismaService> {
@@ -54,13 +53,5 @@ export const mockSaleorProvider: Provider = {
   provide: SaleorService,
   useValue: {
     client: { request: jest.fn() },
-  },
-};
-
-export const mockSearchProvider: Provider = {
-  provide: SearchService,
-  useValue: {
-    client: undefined,
-    search: jest.fn().mockResolvedValue(null),
   },
 };

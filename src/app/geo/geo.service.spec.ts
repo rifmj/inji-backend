@@ -1,10 +1,7 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { HttpModule } from '@nestjs/axios';
 import { GeoService } from './geo.service';
-import {
-  mockPrismaProvider,
-  mockSearchProvider,
-} from '../../test-utils/mock-providers';
+import { mockPrismaProvider } from '../../test-utils/mock-providers';
 
 describe('GeoService', () => {
   let service: GeoService;
@@ -12,7 +9,7 @@ describe('GeoService', () => {
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
       imports: [HttpModule],
-      providers: [GeoService, mockSearchProvider, mockPrismaProvider],
+      providers: [GeoService, mockPrismaProvider],
     }).compile();
 
     service = module.get<GeoService>(GeoService);
