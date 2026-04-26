@@ -1,0 +1,10 @@
+{
+  "type": "service_account",
+  "project_id": "test-project",
+  "private_key_id": "stub",
+  "private_key": "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEA0Z3VS5JJcds3xfn/ygWyF8PbnGy0AHB7MhgwKVPSmwaFkYA\nQIDAQAB\n-----END RSA PRIVATE KEY-----\n",
+  "client_email": "test@test-project.iam.gserviceaccount.com",
+  "client_id": "1",
+  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+  "token_uri": "https://oauth2.googleapis.com/token"
+}

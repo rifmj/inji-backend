@@ -116,6 +116,7 @@
       "ts"
     ],
     "rootDir": "src",
+    "setupFiles": ["<rootDir>/../test/jest-setup-env.ts"],
     "testRegex": ".*\\.spec\\.ts$",
     "transform": {
       "^.+\\.(t|j)s$": "ts-jest"
@@ -124,6 +125,10 @@
       "**/*.(t|j)s"
     ],
     "coverageDirectory": "../coverage",
-    "testEnvironment": "node"
+    "testEnvironment": "node",
+    "moduleNameMapper": {
+      "^src/(.*)$": "<rootDir>/$1",
+      ".*inji-d25d8-firebase-adminsdk-np61c-6a34e73025\\.json$": "<rootDir>/../test/fixtures/firebase-admin-stub.json"
+    }
   }
 }
