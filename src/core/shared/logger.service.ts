@@ -6,8 +6,6 @@ import { SearchService } from '../search/search.service';
 
 export enum LogCtx {
   Auth = 'auth',
-  FrappeOrderService = 'frappe-order-service',
-  XlsService = 'xls-service',
 }
 
 @Injectable()
