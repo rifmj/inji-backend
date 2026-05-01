@@ -3,7 +3,11 @@ jest.mock('firebase-admin', () => {
     send: jest.fn().mockResolvedValue('ok'),
   }));
   const admin = {
-    credential: { cert: jest.fn(() => ({})) },
+    apps: [],
+    credential: {
+      cert: jest.fn(() => ({})),
+      applicationDefault: jest.fn(() => ({})),
+    },
     initializeApp: jest.fn(),
     messaging,
   };

@@ -23,8 +23,15 @@ function resolveFirebaseCredential():
   | ReturnType<typeof admin.credential.applicationDefault>
   | null {
   const json = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
-  if (json) {
-    return admin.credential.cert(JSON.parse(json));
+  if (json?.trim()) {
+    try {
+      return admin.credential.cert(JSON.parse(json) as Record<string, unknown>);
+    } catch (e) {
+      Logger.warn(
+        `FIREBASE_SERVICE_ACCOUNT_JSON is not valid JSON; trying other credential sources: ${e}`,
+        'PushService',
+      );
+    }
   }
 
   const projectId = process.env.FIREBASE_PROJECT_ID;
@@ -35,18 +42,39 @@ function resolveFirebaseCredential():
   }
 
   if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
-    return admin.credential.applicationDefault();
+    try {
+      return admin.credential.applicationDefault();
+    } catch (e) {
+      Logger.warn(
+        `GOOGLE_APPLICATION_CREDENTIALS / applicationDefault failed: ${e}`,
+        'PushService',
+      );
+    }
   }
 
   const path = process.env.FIREBASE_SERVICE_ACCOUNT_PATH;
   if (path && existsSync(path)) {
-    const raw = readFileSync(path, 'utf8');
-    return admin.credential.cert(JSON.parse(raw));
+    try {
+      const raw = readFileSync(path, 'utf8');
+      return admin.credential.cert(JSON.parse(raw) as Record<string, unknown>);
+    } catch (e) {
+      Logger.warn(
+        `Failed to read FIREBASE_SERVICE_ACCOUNT_PATH: ${e}`,
+        'PushService',
+      );
+    }
   }
 
   if (existsSync(LEGACY_SERVICE_ACCOUNT_PATH)) {
-    const raw = readFileSync(LEGACY_SERVICE_ACCOUNT_PATH, 'utf8');
-    return admin.credential.cert(JSON.parse(raw));
+    try {
+      const raw = readFileSync(LEGACY_SERVICE_ACCOUNT_PATH, 'utf8');
+      return admin.credential.cert(JSON.parse(raw) as Record<string, unknown>);
+    } catch (e) {
+      Logger.warn(
+        `Failed to load legacy Firebase key file: ${e}`,
+        'PushService',
+      );
+    }
   }
 
   return null;
@@ -62,7 +90,7 @@ export class PushService {
     private loggerService: LoggerService,
     private prismaService: PrismaService,
   ) {
-    if (admin.apps.length > 0) {
+    if ((admin.apps?.length ?? 0) > 0) {
       return;
     }
     const credential = resolveFirebaseCredential();
@@ -73,12 +101,20 @@ export class PushService {
       );
       return;
     }
-    admin.initializeApp({ credential });
-    Logger.log(`Firebase app initialized`, 'PushService');
+    try {
+      admin.initializeApp({ credential });
+      Logger.log(`Firebase app initialized`, 'PushService');
+    } catch (e) {
+      Logger.error(
+        `Firebase Admin initializeApp failed: ${e}`,
+        e instanceof Error ? e.stack : '',
+        'PushService',
+      );
+    }
   }
 
   private firebaseReady(): boolean {
-    return admin.apps.length > 0;
+    return (admin.apps?.length ?? 0) > 0;
   }
 
   async sendToDevice(token: string, payload: MessagingPayload) {
