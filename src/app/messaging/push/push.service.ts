@@ -1,3 +1,6 @@
+import { existsSync, readFileSync } from 'fs';
+import { join } from 'path';
+
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import admin, { messaging } from 'firebase-admin';
 
@@ -10,7 +13,44 @@ const notificationOptions = {
   timeToLive: 60 * 60 * 24,
 };
 
-const serviceAccount = require('../../../../private/firebase/inji-d25d8-firebase-adminsdk-np61c-6a34e73025.json');
+const LEGACY_SERVICE_ACCOUNT_PATH = join(
+  __dirname,
+  '../../../../private/firebase/inji-d25d8-firebase-adminsdk-np61c-6a34e73025.json',
+);
+
+function resolveFirebaseCredential():
+  | ReturnType<typeof admin.credential.cert>
+  | ReturnType<typeof admin.credential.applicationDefault>
+  | null {
+  const json = process.env.FIREBASE_SERVICE_ACCOUNT_JSON;
+  if (json) {
+    return admin.credential.cert(JSON.parse(json));
+  }
+
+  const projectId = process.env.FIREBASE_PROJECT_ID;
+  const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+  const privateKey = process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n');
+  if (projectId && clientEmail && privateKey) {
+    return admin.credential.cert({ projectId, clientEmail, privateKey });
+  }
+
+  if (process.env.GOOGLE_APPLICATION_CREDENTIALS) {
+    return admin.credential.applicationDefault();
+  }
+
+  const path = process.env.FIREBASE_SERVICE_ACCOUNT_PATH;
+  if (path && existsSync(path)) {
+    const raw = readFileSync(path, 'utf8');
+    return admin.credential.cert(JSON.parse(raw));
+  }
+
+  if (existsSync(LEGACY_SERVICE_ACCOUNT_PATH)) {
+    const raw = readFileSync(LEGACY_SERVICE_ACCOUNT_PATH, 'utf8');
+    return admin.credential.cert(JSON.parse(raw));
+  }
+
+  return null;
+}
 
 /**
  * Руководство по пушам:
@@ -22,14 +62,29 @@ export class PushService {
     private loggerService: LoggerService,
     private prismaService: PrismaService,
   ) {
-    admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount),
-    });
-    console.log(`Firebase app initialized`);
+    if (admin.apps.length > 0) {
+      return;
+    }
+    const credential = resolveFirebaseCredential();
+    if (!credential) {
+      Logger.warn(
+        'Firebase Admin not configured; push disabled. Set FIREBASE_SERVICE_ACCOUNT_JSON, FIREBASE_PROJECT_ID + FIREBASE_CLIENT_EMAIL + FIREBASE_PRIVATE_KEY, GOOGLE_APPLICATION_CREDENTIALS, FIREBASE_SERVICE_ACCOUNT_PATH, or add the legacy key file under private/firebase/.',
+        'PushService',
+      );
+      return;
+    }
+    admin.initializeApp({ credential });
+    Logger.log(`Firebase app initialized`, 'PushService');
   }
-  //TODO - Подумать, как использовать одну инстанс firebase_app
+
+  private firebaseReady(): boolean {
+    return admin.apps.length > 0;
+  }
 
   async sendToDevice(token: string, payload: MessagingPayload) {
+    if (!this.firebaseReady()) {
+      return;
+    }
     try {
       const message = await admin
         .messaging()
@@ -43,6 +98,9 @@ export class PushService {
   }
 
   async sendToDevices(tokens: string[], payload: MessagingPayload) {
+    if (!this.firebaseReady()) {
+      return;
+    }
     console.info('tok', tokens, payload);
     if (!tokens?.length) {
       return;
@@ -84,6 +142,9 @@ export class PushService {
   }
 
   async sendToUser(userId: string, payload: MessagingPayload) {
+    if (!this.firebaseReady()) {
+      return;
+    }
     if (!userId) {
       throw new NotFoundException();
     }
