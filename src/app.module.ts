@@ -2,10 +2,11 @@ import { Module, OnModuleInit } from '@nestjs/common';
 import { LoggerService } from './core/shared/logger.service';
 import { CoreModule } from './core/core.module';
 import { AppModule as InjiAppModule } from './app/app.module';
+import { AppController } from './app.controller';
 
 @Module({
   imports: [CoreModule, InjiAppModule],
-  controllers: [],
+  controllers: [AppController],
   providers: [LoggerService],
 })
 export class AppModule implements OnModuleInit {
