@@ -9,16 +9,16 @@ if ! command -v docker >/dev/null 2>&1; then
   exit 1
 fi
 
-DC=(docker compose)
-if ! docker compose version >/dev/null 2>&1; then
-  if sudo docker compose version >/dev/null 2>&1; then
-    DC=(sudo docker compose)
-  elif command -v docker-compose >/dev/null 2>&1; then
-    DC=(docker-compose)
-  else
-    echo "Need Docker Compose v2 (docker compose) or docker-compose"
-    exit 1
-  fi
+# Use Docker as current user if allowed; otherwise sudo (typical when user not in "docker" group).
+if docker info >/dev/null 2>&1; then
+  DC=(docker compose)
+elif sudo docker info >/dev/null 2>&1; then
+  DC=(sudo docker compose)
+elif command -v docker-compose >/dev/null 2>&1; then
+  DC=(docker-compose)
+else
+  echo "Docker not installed or daemon not reachable. Install Docker and ensure the service runs."
+  exit 1
 fi
 
 if [ ! -f .env.db ]; then
