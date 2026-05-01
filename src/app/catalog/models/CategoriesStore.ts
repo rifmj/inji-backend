@@ -1,12 +1,7 @@
 import { CronJob } from 'cron';
-import { gql, GraphQLClient } from 'graphql-request';
+import { GraphQLClient } from 'graphql-request';
 
-import * as any from 'promise.any';
-import {
-  FlatCategoriesQuery,
-  FlatProductsQuery,
-  QueryProductsDocument,
-} from '../catalog.graphql';
+import { FlatCategoriesQuery } from '../catalog.graphql';
 import { nodeCache } from '../../../core/utils/cache';
 
 export class CategoriesStore<
@@ -18,8 +13,6 @@ export class CategoriesStore<
     };
   },
 > {
-  private count: number;
-
   constructor(
     private props: {
       cacheKey: string;
@@ -29,10 +22,7 @@ export class CategoriesStore<
     },
   ) {}
 
-  async init() {
-    // console.info('Refresh categories');
-    // await any([this.refresh(), this.addCronJob()]);
-  }
+  async init() {}
 
   async fetchAll() {
     const first = 100;
@@ -40,7 +30,6 @@ export class CategoriesStore<
     try {
       const res = await this.props.client.request(FlatCategoriesQuery, {
         first,
-        locale: 'RU',
       });
       console.info('Res, res', res);
       let endCursor = res.categories.pageInfo.endCursor;
@@ -55,7 +44,6 @@ export class CategoriesStore<
           const data = await this.props.client.request(FlatCategoriesQuery, {
             first,
             after: endCursor,
-            locale: 'RU',
           });
           result.push(data);
           if (data.categories.edges.length < first) {
@@ -72,22 +60,7 @@ export class CategoriesStore<
     }
   }
 
-  async refresh() {
-    // const categories = await this.fetchAll();
-    // this.count = categories.length;
-    // nodeCache.set(this.props.cacheKey, categories);
-    return;
-  }
-
   get list() {
     return nodeCache.get(this.props.cacheKey);
-  }
-
-  private async addCronJob() {
-    // const job = new CronJob(this.props.cronTime, () => {
-    //   this.refresh();
-    // });
-    // job.start();
-    return null;
   }
 }

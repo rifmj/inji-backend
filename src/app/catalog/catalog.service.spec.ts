@@ -2,7 +2,6 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { ConfigService } from '@nestjs/config';
 import { SchedulerRegistry } from '@nestjs/schedule';
 import { CatalogService } from './catalog.service';
-import { RedisService } from '../../core/redis/redis.service';
 
 describe('CatalogService', () => {
   let service: CatalogService;
@@ -16,15 +15,9 @@ describe('CatalogService', () => {
           useValue: {
             get: jest.fn((key: string) => {
               if (key === 'app.catalog.categoryRefreshCron') return '*/5 * * * *';
-              if (key === 'app.catalog.productRefreshCron')
-                return '*/30 * * * *';
               return undefined;
             }),
           },
-        },
-        {
-          provide: RedisService,
-          useValue: { client: {} },
         },
         {
           provide: SchedulerRegistry,

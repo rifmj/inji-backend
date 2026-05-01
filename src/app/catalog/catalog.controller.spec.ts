@@ -12,10 +12,7 @@ describe('CatalogController', () => {
         {
           provide: CatalogService,
           useValue: {
-            refreshCategories: jest.fn(),
-            refreshProducts: jest.fn(),
             categories: [],
-            products: [],
             stocks: {},
           },
         },
