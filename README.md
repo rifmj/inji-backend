@@ -3,6 +3,7 @@ SSL PINNING: https://habr.com/ru/post/559722/
 Создание thumbnails:
 python manage.py create_thumbnails
 
+
 [{"id": "Q2hlY2tvdXRMaW5lOjk2NjRjN2VhLTE2ZTItNDQ1My05ZTcxLTQyZjE0MDQyZGY4MA==", "variant": {"id": "UHJvZHVjdFZhcmlhbnQ6NDIz", "name": "UHJvZHVjdFZhcmlhbnQ6NDIz", "pricing": {"price": {"gross": {"amount": 380, "currency": "KZT", "__typename": "Money"}, "__typename": "TaxedMoney"}, "__typename": "VariantPricingInfo"}, "product": {"id": "UHJvZHVjdDo0MjU=", "name": "Фасоль белая натуральная 'Кублей'", "slug": "C6PvNj-9P83rYkCj", "thumbnail": {"alt": "", "url": "https://ams3.digitaloceanspaces.com/inji-shop-media/thumbnails/products/optimized_9ca1e828_thumbnail_256.jpg", "__typename": "Image"}, "__typename": "Product", "translation": null}, "__typename": "ProductVariant", "translation": null}, "quantity": 1, "__typename": "CheckoutLine", "totalPrice": {"gross": {"amount": 380, "currency": "KZT", "__typename": "Money"}, "__typename": "TaxedMoney"}}]
 
 
