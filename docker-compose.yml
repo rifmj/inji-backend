@@ -1,0 +1,25 @@
+# PostgreSQL for inji-backend (Prisma). App stays on host/PM2; DATABASE_URL points here.
+# Copy docker-compose.env.example -> .env.db, then: docker compose up -d
+#
+# Default host port 5433 → avoids clashing with another Postgres on :5432 (e.g. Saleor).
+name: inji-stack
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: inji-postgres
+    restart: unless-stopped
+    env_file:
+      - .env.db
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - inji_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U inji -d inji']
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  inji_pgdata:
