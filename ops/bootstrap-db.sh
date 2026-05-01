@@ -34,6 +34,14 @@ fi
 
 "${DC[@]}" up -d
 
+# Wait until Postgres accepts connections (avoids immediate prisma migrate failures).
+for _ in $(seq 1 60); do
+  if "${DC[@]}" exec -T postgres pg_isready -U inji -d inji >/dev/null 2>&1; then
+    break
+  fi
+  sleep 1
+done
+
 set -a
 # shellcheck disable=SC1090
 source .env.db
