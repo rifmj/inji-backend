@@ -1,3 +1,26 @@
+## Environment variables
+
+Before running the app, copy the documented template and fill in real values:
+
+```bash
+cp .env.example .env
+```
+
+See [.env.example](.env.example) for the full, cross-checked list of variables the
+app reads (from `src/app/config/configuration.ts`, the Joi schema in
+`src/core/common/common.module.ts`, and `prisma/schema.prisma`).
+
+**Required** (the app crash-loops or cannot start without them):
+
+- `SECRETS_ENCRYPTION_KEY` — 32-byte AES-256-GCM key, **exactly 64 hex chars**.
+  Asserted at boot; if missing the app crash-loops with
+  `Required parameter secrets.encryptionKey was null or undefined when calling`.
+  Generate with `openssl rand -hex 32`.
+- `DATABASE_URL` — Postgres connection string for Prisma.
+- `JWT_SECRET` — secret used to sign/verify JWTs.
+
+---
+
 SSL PINNING: https://habr.com/ru/post/559722/
 
 Создание thumbnails:
