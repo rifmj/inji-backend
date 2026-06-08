@@ -28,6 +28,7 @@ export default () => {
     TELEGRAM_AUTH_BOT_TOKEN,
     TELEGRAM_AUTH_BOT_USERNAME,
     TELEGRAM_AUTH_WHATSAPP_PHONE,
+    TELEGRAM_AUTH_BOT_ENABLED,
     TELEGRAM_AUTH_HASH_TTL_MINUTES,
     TELEGRAM_WEBHOOK_DOMAIN,
     TELEGRAM_WEBHOOK_SECRET,
@@ -94,6 +95,10 @@ export default () => {
       authBotUsername: TELEGRAM_AUTH_BOT_USERNAME,
       // WhatsApp number (digits only, e.g. "77474438640") for the WhatsApp flow.
       whatsappPhone: TELEGRAM_AUTH_WHATSAPP_PHONE,
+      // Force-enable the polling auth bot regardless of ENV. The bot is skipped
+      // by default on ENV=dev (so dev laptops don't poll), but a shared
+      // dev/staging box can opt in by setting TELEGRAM_AUTH_BOT_ENABLED=true.
+      authBotEnabled: TELEGRAM_AUTH_BOT_ENABLED === 'true',
       // (c) Lifetime of a one-time auth hash, in minutes.
       authHashTtlMinutes: TELEGRAM_AUTH_HASH_TTL_MINUTES
         ? parseInt(TELEGRAM_AUTH_HASH_TTL_MINUTES, 10)

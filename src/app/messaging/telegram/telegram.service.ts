@@ -30,6 +30,15 @@ export class TelegramService implements OnModuleInit {
     return this.configService.get<string>('telegram.webhookSecret');
   }
 
+  // The auth bot runs when: webhook mode is on, OR it is explicitly enabled
+  // via TELEGRAM_AUTH_BOT_ENABLED, OR we are not in a dev environment. The
+  // dev skip prevents developer laptops from polling the shared bot token.
+  private get authBotEnabled(): boolean {
+    if (this.useWebhook) return true;
+    if (this.configService.get<boolean>('telegram.authBotEnabled')) return true;
+    return process.env.ENV !== 'dev';
+  }
+
   async createNotificationBot() {
     const token = this.configService.get<string>(
       'telegram.notificationBotToken',
@@ -151,22 +160,23 @@ export class TelegramService implements OnModuleInit {
   }
 
   async onModuleInit(): Promise<void> {
-    // In webhook mode it is safe (and desirable) to register the webhook even
-    // in dev. Long-polling, however, is skipped in dev to avoid two local
-    // instances fighting over getUpdates.
-    if (process.env.ENV === 'dev' && !this.useWebhook) {
-      // Still build the notification bot so outgoing messages work locally.
-      try {
-        await this.createNotificationBot();
-      } catch (e) {
-        console.info('Could not start notification bot', e);
-      }
+    // The notification bot only sends messages, so it is always built.
+    try {
+      await this.createNotificationBot();
+    } catch (e) {
+      console.info('Could not start notification bot', e);
+    }
+
+    if (!this.authBotEnabled) {
+      console.info(
+        'TelegramService: auth bot disabled (ENV=dev, no webhook/override)',
+      );
       return;
     }
     try {
-      await Promise.all([this.createAuthBot(), this.createNotificationBot()]);
+      await this.createAuthBot();
     } catch (e) {
-      console.info('Could not start bot', e);
+      console.info('Could not start auth bot', e);
     }
   }
 
