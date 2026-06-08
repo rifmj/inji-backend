@@ -22,7 +22,22 @@ export class CategoriesStore<
     },
   ) {}
 
-  async init() {}
+  async init() {
+    // Schedule the periodic refresh, then kick off an initial population.
+    // refresh() is intentionally not awaited so a slow or unreachable Saleor
+    // never blocks application bootstrap.
+    this.addCronJob();
+    this.refresh();
+  }
+
+  async refresh() {
+    const categories = await this.fetchAll();
+    // fetchAll() returns [] when it swallows a transient error — don't clobber
+    // a previously-good cache with an empty list in that case.
+    if (categories.length) {
+      nodeCache.set(this.props.cacheKey, categories);
+    }
+  }
 
   async fetchAll() {
     const first = 100;
@@ -61,6 +76,14 @@ export class CategoriesStore<
   }
 
   get list() {
-    return nodeCache.get(this.props.cacheKey);
+    return nodeCache.get(this.props.cacheKey) ?? [];
+  }
+
+  private addCronJob() {
+    const job = new CronJob(this.props.cronTime, () => {
+      this.refresh();
+    });
+    this.props.onCronAdd(job);
+    job.start();
   }
 }
