@@ -108,7 +108,10 @@ export class AuthController {
     @Req() req: Request,
     @Session() session: Record<string, any>,
   ) {
-    session.tokens = null;
+    // express-session is disabled (see main.ts), so req.session is undefined;
+    // the real sign-out is the DB session revocation below. Guard the legacy
+    // session write so the handler doesn't 500.
+    if (session) session.tokens = null;
     if (sessionId) {
       await this.prismaService.session.update({
         where: { id: sessionId },
