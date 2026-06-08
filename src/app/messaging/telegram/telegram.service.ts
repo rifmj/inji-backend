@@ -33,6 +33,9 @@ export class TelegramService implements OnModuleInit {
 
   private exitListenersRegistered = false;
 
+  // Consecutive failed relaunches, for jittered exponential backoff.
+  private authBotRelaunchAttempts = 0;
+
   private get useWebhook(): boolean {
     return !!this.configService.get<boolean>('telegram.useWebhook');
   }
@@ -104,25 +107,34 @@ export class TelegramService implements OnModuleInit {
     const authBot = new Telegraf(token);
     this.authBot = authBot;
     this.registerAuthHandlers(authBot);
+    const startedAt = Date.now();
     // launch() resolves when the bot is stopped, and rejects on a polling error.
     authBot
       .launch()
       .then(() => console.info('TelegramService:authBotPollingStopped'))
       .catch((err) => {
         console.error(
-          'TelegramService:authBotPollingError; relaunching soon:',
+          'TelegramService:authBotPollingError:',
           (err as Error)?.message ?? err,
         );
         try {
           authBot.stop('relaunch');
         } catch {
-          // already stopped
+          // already aborted
         }
-        if (this.authBotStopped) return;
-        setTimeout(
-          () => this.startAuthBotPolling(token),
-          TELEGRAM_POLL_RELAUNCH_MS,
+        // Stop if we're shutting down, or if a newer poll loop has superseded
+        // this instance — prevents duplicate loops from relaunching forever.
+        if (this.authBotStopped || this.authBot !== authBot) return;
+        // Reset backoff if this loop had been healthy for a while; otherwise
+        // grow it (with jitter) so two conflicting pollers don't ping-pong in
+        // lockstep, e.g. during a deploy overlap.
+        if (Date.now() - startedAt > 60_000) this.authBotRelaunchAttempts = 0;
+        const attempt = Math.min(this.authBotRelaunchAttempts++, 4);
+        const delay = Math.round(
+          TELEGRAM_POLL_RELAUNCH_MS * 2 ** attempt * (0.5 + Math.random()),
         );
+        console.info(`TelegramService: relaunching auth bot in ${delay}ms`);
+        setTimeout(() => this.startAuthBotPolling(token), delay);
       });
   }
 

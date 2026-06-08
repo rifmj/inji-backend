@@ -27,7 +27,12 @@ export class CategoriesStore<
     // refresh() is intentionally not awaited so a slow or unreachable Saleor
     // never blocks application bootstrap.
     this.addCronJob();
-    this.refresh();
+    // Detached on purpose; swallow rejections so a Saleor failure can't bubble
+    // up as an unhandled rejection (there is no global unhandledRejection
+    // handler, so that would otherwise crash the process).
+    this.refresh().catch((e) =>
+      console.error('CategoriesStore initial refresh failed', e),
+    );
   }
 
   async refresh() {
@@ -81,7 +86,9 @@ export class CategoriesStore<
 
   private addCronJob() {
     const job = new CronJob(this.props.cronTime, () => {
-      this.refresh();
+      this.refresh().catch((e) =>
+        console.error('CategoriesStore cron refresh failed', e),
+      );
     });
     this.props.onCronAdd(job);
     job.start();
