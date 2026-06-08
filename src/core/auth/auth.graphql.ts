@@ -20,7 +20,7 @@ export const MutationAccountRegisterDocument = gql`
     $email: String!
     $password: String!
     $channel: String!
-    $redirectUrl: String!
+    $redirectUrl: String
   ) {
     accountRegister(
       input: {

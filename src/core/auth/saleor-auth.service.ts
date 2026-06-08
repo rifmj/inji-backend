@@ -47,11 +47,16 @@ export class SaleorAuthService {
   // Idempotent: if the Saleor account already exists, returns silently.
   async provisionAccount(user: User): Promise<void> {
     const password = decryptSecret(user.saleorPasswordEnc, this.encryptionKey);
+    // redirectUrl is only consumed by Saleor when account-confirmation email is
+    // enabled, and Saleor validates its host against ALLOWED_CLIENT_HOSTS. A
+    // hardcoded URL (e.g. an old storefront) silently breaks signup whenever the
+    // Saleor config drifts, so keep it configurable and omit it by default.
+    const redirectUrl = process.env.SALEOR_ACCOUNT_REDIRECT_URL || undefined;
     const res = await this.client.request(MutationAccountRegisterDocument, {
       email: user.saleorEmail,
       password,
-      channel: 'mobile',
-      redirectUrl: 'https://core.inji.kz',
+      channel: process.env.SALEOR_CHANNEL || 'mobile',
+      redirectUrl,
     });
     const errors = res?.accountRegister?.accountErrors ?? [];
     const alreadyExists = errors.some((e: any) => e.code === 'UNIQUE');
