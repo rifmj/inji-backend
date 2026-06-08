@@ -3,6 +3,10 @@ import { session, Telegraf } from 'telegraf';
 import { PrismaService } from '../../../core/prisma/prisma.service';
 import { ConfigService } from '@nestjs/config';
 
+// Path the auth bot's webhook is registered under. Must match the route in
+// TelegramController (versioned → /v1/telegram/webhook).
+export const TELEGRAM_WEBHOOK_PATH = '/v1/telegram/webhook';
+
 @Injectable()
 export class TelegramService implements OnModuleInit {
   constructor(
@@ -18,20 +22,65 @@ export class TelegramService implements OnModuleInit {
 
   chats: Record<string, string> = {};
 
+  private get useWebhook(): boolean {
+    return !!this.configService.get<boolean>('telegram.useWebhook');
+  }
+
+  private get webhookSecret(): string | undefined {
+    return this.configService.get<string>('telegram.webhookSecret');
+  }
+
   async createNotificationBot() {
-    const bot = new Telegraf(
-      this.configService.get('telegram.notificationBotToken'),
+    const token = this.configService.get<string>(
+      'telegram.notificationBotToken',
     );
+    if (!token) return;
+    const bot = new Telegraf(token);
     bot.use(session());
     this.bot = bot;
+    // The notification bot only sends messages, so it needs neither polling
+    // nor a webhook — having the instance is enough for sendMessage().
   }
 
   async createAuthBot() {
-    const authBot = new Telegraf(
-      this.configService.get('telegram.authBotToken'),
-    );
+    const token = this.configService.get<string>('telegram.authBotToken');
+    if (!token) return;
+
+    const authBot = new Telegraf(token);
     this.authBot = authBot;
-    this.authBot.start(async (ctx) => {
+    this.registerAuthHandlers(authBot);
+
+    if (this.useWebhook) {
+      // (b) Webhook mode — required on serverless/Vercel where long-polling
+      // does not survive. Telegram pushes updates to TelegramController, which
+      // forwards them to handleAuthUpdate().
+      const domain = (
+        this.configService.get<string>('telegram.webhookDomain') || ''
+      ).replace(/\/+$/, '');
+      if (!domain) {
+        console.info('TelegramService: webhook mode but no webhookDomain set');
+        return;
+      }
+      const url = `${domain}${TELEGRAM_WEBHOOK_PATH}`;
+      await authBot.telegram.setWebhook(url, {
+        secret_token: this.webhookSecret || undefined,
+        drop_pending_updates: true,
+      });
+      console.info('TelegramService:authBotWebhookSet', url);
+      return;
+    }
+
+    // Long-polling mode — for local/non-serverless deployments.
+    authBot.launch().then(() => {
+      console.info('TelegramService:authBotLaunch');
+    });
+    this.createExitListeners();
+  }
+
+  // Registers the /start + contact-share handlers. Used by both webhook and
+  // polling modes.
+  private registerAuthHandlers(authBot: Telegraf) {
+    authBot.start(async (ctx) => {
       this.chats[ctx.chat.id] = ctx.startPayload;
       const msg = await ctx.reply(
         'Пожалуйста, укажите номер телефона, чтобы авторизоваться',
@@ -52,11 +101,7 @@ export class TelegramService implements OnModuleInit {
       console.info('MSGG', msg);
     });
 
-    this.authBot.launch().then(() => {
-      console.info('TelegramService:authBotLaunch');
-    });
-
-    this.authBot.on('message', async (ctx) => {
+    authBot.on('message', async (ctx) => {
       const payload = this.chats[ctx.chat.id];
 
       if (!payload) {
@@ -80,31 +125,53 @@ export class TelegramService implements OnModuleInit {
     });
   }
 
+  // Validates the X-Telegram-Bot-Api-Secret-Token header Telegram echoes back
+  // when a secret_token was configured. If no secret is configured we accept
+  // (Telegram simply does not send the header).
+  isValidWebhookSecret(token?: string): boolean {
+    if (!this.webhookSecret) return true;
+    return token === this.webhookSecret;
+  }
+
+  // Feeds a webhook update into the bot's middleware chain.
+  async handleAuthUpdate(update: unknown): Promise<void> {
+    if (!this.authBot) return;
+    await this.authBot.handleUpdate(update as any);
+  }
+
   createExitListeners() {
     process.once('SIGINT', () => {
-      this.bot.stop('SIGINT');
-      this.authBot.stop('SIGINT');
+      this.bot?.stop('SIGINT');
+      this.authBot?.stop('SIGINT');
     });
     process.once('SIGTERM', () => {
-      this.bot.stop('SIGTERM');
-      this.authBot.stop('SIGTERM');
+      this.bot?.stop('SIGTERM');
+      this.authBot?.stop('SIGTERM');
     });
   }
 
-  onModuleInit(): any {
-    if (process.env.ENV === 'dev') {
+  async onModuleInit(): Promise<void> {
+    // In webhook mode it is safe (and desirable) to register the webhook even
+    // in dev. Long-polling, however, is skipped in dev to avoid two local
+    // instances fighting over getUpdates.
+    if (process.env.ENV === 'dev' && !this.useWebhook) {
+      // Still build the notification bot so outgoing messages work locally.
+      try {
+        await this.createNotificationBot();
+      } catch (e) {
+        console.info('Could not start notification bot', e);
+      }
       return;
     }
     try {
-      Promise.all([this.createAuthBot(), this.createNotificationBot()]);
-      this.createExitListeners();
+      await Promise.all([this.createAuthBot(), this.createNotificationBot()]);
     } catch (e) {
       console.info('Could not start bot', e);
     }
   }
 
   sendMessage(text: string, chatId = '-1001489578377') {
-    if (!this.isLaunched) {
+    if (!this.isLaunched || !this.bot) {
       return;
     }
     return this.bot.telegram

@@ -24,22 +24,15 @@ export class PaymentsController {
   @ApiBasicAuth('JWT')
   @Post()
   create(@Body() data, @User('id') userId: string) {
-    return this.paymentsService.create(data);
+    return this.paymentsService.create(data, userId);
   }
 
+  @UseGuards(AuthGuard)
+  @ApiBasicAuth('JWT')
   @Get('cards')
-  async getSavedCards(@Query('phone') phone: string) {
-    const user = await this.prismaService.user.findFirst({
-      where: {
-        phone,
-      },
-    });
-    if (!user) throw new NotAcceptableException();
-
+  async getSavedCards(@User('id') userId: string) {
     return this.prismaService.savedCard.findMany({
-      where: {
-        userId: user.id,
-      },
+      where: { userId },
       select: {
         id: true,
         cardLastFour: true,

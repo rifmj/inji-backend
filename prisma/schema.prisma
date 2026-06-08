@@ -13,6 +13,11 @@ enum SmsChannel {
   whatsapp
 }
 
+enum AuthProvider {
+  phone
+  apple
+}
+
 model SmsRequestCode {
   id String @id @default(cuid())
 
@@ -44,13 +49,28 @@ model User {
 
   hashedRefreshToken String?
 
-  phone String @unique
+  // Optional contact info — not used for authentication
+  phone String? @unique
+  email String?
+  name  String?
+
+  // Stable Saleor handle, independent of identity providers.
+  // Format: u{userId}@inji.kz. Created once at User creation, never changes.
+  saleorEmail       String @unique
+  // Random 32-byte secret used as the Saleor account password. AES-GCM
+  // encrypted with secrets.encryptionKey. Treated as an opaque shared secret
+  // between this backend and Saleor; clients never see it.
+  saleorPasswordEnc String
 
   isActive  Boolean @default(true)
   isDeleted Boolean @default(false)
   isBanned  Boolean @default(false)
 
-  sessions Session[]
+  sessions      Session[]
+  identities    AuthIdentity[]
+  appleSessions AppleSession[]
+
+  @@index([phone])
 }
 
 model Session {
@@ -61,13 +81,62 @@ model Session {
 
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
   userId String
+
+  @@index([userId])
+}
+
+// One row per (provider, external subject). Phone-login users get one
+// row with provider=phone, subject=<normalized phone>. Apple-login users get
+// provider=apple, subject=<apple.sub>. A user can have many identities.
+model AuthIdentity {
+  id       String       @id @default(cuid())
+  provider AuthProvider
+  subject  String
+  email    String?
+  rawData  Json?
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+
+  createdAt DateTime @default(now())
+
+  @@unique([provider, subject])
+  @@index([userId])
+}
+
+// Server-issued nonces for Apple Sign-In replay protection.
+// Apple includes SHA256(nonce) as a claim in the identityToken; we match
+// against this table and one-shot delete on consume.
+model AppleAuthNonce {
+  id        String   @id @default(cuid())
+  nonce     String   @unique
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+}
+
+// Apple refresh tokens (one per device sign-in), AES-GCM encrypted.
+// Needed at account-deletion time to revoke Apple's grant via /auth/revoke.
+model AppleSession {
+  id              String   @id @default(cuid())
+  appleSub        String
+  refreshTokenEnc String
+  createdAt       DateTime @default(now())
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId String
+
+  @@index([userId])
+  @@index([appleSub])
 }
 
 model Invoice {
   id           String   @id
   createdAt    DateTime @default(now())
   amount       Float
-  userPhone    String
+  // Owning user (identity). Phone may change/become null; userId is stable.
+  userId       String?
+  // Denormalized contact phone snapshot at order time. Display/contact only.
+  userPhone    String?
   checkoutId   String?
   status       Int?
   operationUrl String?
@@ -76,6 +145,8 @@ model Invoice {
   userComment  String?
   products     Json?
   data         Json?
+
+  @@index([userId])
 }
 
 model UserDevice {
@@ -85,6 +156,8 @@ model UserDevice {
   deviceId  String
   isRevoked Boolean  @default(false)
   createdAt DateTime @default(now())
+
+  @@index([userId])
 }
 
 model Product {
@@ -106,11 +179,14 @@ model Product {
 }
 
 model TelegramAuthRequest {
-  id        String   @id @default(cuid())
-  createdAt DateTime @default(now())
+  id        String    @id @default(cuid())
+  createdAt DateTime  @default(now())
   hash      String
   phone     String?
   data      Json?
+  // (c) Hash hardening: short-lived and single-use.
+  expiresAt DateTime?
+  usedAt    DateTime?
 }
 
 model DeliveryEstimate {
@@ -138,4 +214,6 @@ model SavedCard {
   userId       String
   cardToken    String
   cardLastFour String
+
+  @@index([userId])
 }

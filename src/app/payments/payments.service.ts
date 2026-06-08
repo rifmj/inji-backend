@@ -4,7 +4,8 @@ import { nanoid } from 'nanoid';
 
 interface CreateInvoiceData {
   amount: number;
-  user_phone: string;
+  user_phone?: string;
+  userId?: string;
   checkoutId: string;
 }
 
@@ -14,8 +15,8 @@ export class PaymentsService {
 
   async updateInvoiceStatus(id: string) {}
 
-  async create(data) {
-    return this.createInvoice(data);
+  async create(data: CreateInvoiceData, userId?: string) {
+    return this.createInvoice({ ...data, userId: userId ?? data.userId });
   }
 
   async createInvoice(data: CreateInvoiceData) {
@@ -25,11 +26,10 @@ export class PaymentsService {
         id,
         checkoutId: data.checkoutId,
         amount: data.amount,
-        userPhone: data.user_phone,
+        userId: data.userId ?? null,
+        userPhone: data.user_phone ?? null,
       },
     });
-    return {
-      id: createdInvoice.id,
-    };
+    return { id: createdInvoice.id };
   }
 }

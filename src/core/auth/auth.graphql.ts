@@ -41,3 +41,30 @@ export const MutationAccountRegisterDocument = gql`
     }
   }
 `;
+
+// Used at account-deletion time. Saleor requires an authenticated token to
+// delete the account; the staff token from SALEOR_BACKEND_TOKEN cannot delete
+// customer accounts. We call accountRequestDeletion which sends a verification
+// email — sufficient for cleanup. If you want hard delete, expose a staff
+// mutation or use customerDelete from a staff app.
+export const MutationCustomerBulkDeleteDocument = gql`
+  mutation CustomerBulkDelete($ids: [ID!]!) {
+    customerBulkDelete(ids: $ids) {
+      count
+      errors {
+        field
+        code
+        message
+      }
+    }
+  }
+`;
+
+export const QueryCustomerByEmailDocument = gql`
+  query CustomerByEmail($email: String!) {
+    user(email: $email) {
+      id
+      email
+    }
+  }
+`;

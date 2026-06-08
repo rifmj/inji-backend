@@ -46,16 +46,13 @@ export class PaymentHooksService {
     this.loggerService.info(body, 'cloudpayments-pay');
 
     try {
-      // Extract phone number from AccountId (remove @inji.kz suffix)
-      const phone = body.AccountId.split('@')[0].replace('c', '');
-
-      // Find user by phone number
+      // AccountId is the Saleor account email we provisioned for the user.
+      // Resolve it back to the local User via the stable saleorEmail handle.
       const user = await this.prismaService.user.findUnique({
-        where: { phone },
+        where: { saleorEmail: body.AccountId },
       });
 
       if (user) {
-        // Save card information
         await this.prismaService.savedCard.create({
           data: {
             userId: user.id,

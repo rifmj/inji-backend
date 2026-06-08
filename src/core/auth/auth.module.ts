@@ -7,6 +7,9 @@ import { PrismaModule } from '../prisma/prisma.module';
 import { LoggerService } from '../shared/logger.service';
 import { TelegramModule } from '../../app/messaging/telegram/telegram.module';
 import { SmsModule } from '../../app/messaging/sms/sms.module';
+import { IdentityService } from './identity.service';
+import { SaleorAuthService } from './saleor-auth.service';
+import { AppleAuthService } from './apple-auth.service';
 
 @Module({
   imports: [
@@ -19,8 +22,14 @@ import { SmsModule } from '../../app/messaging/sms/sms.module';
       signOptions: { expiresIn: '36000s' },
     }),
   ],
-  providers: [AuthService, LoggerService],
+  providers: [
+    AuthService,
+    LoggerService,
+    SaleorAuthService,
+    IdentityService,
+    AppleAuthService,
+  ],
   controllers: [AuthController],
-  exports: [AuthService],
+  exports: [AuthService, IdentityService],
 })
 export class AuthModule {}

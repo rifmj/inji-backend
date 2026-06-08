@@ -1,9 +1,7 @@
 import {
-  BadRequestException,
   ForbiddenException,
   Injectable,
   NotAcceptableException,
-  NotFoundException,
   OnModuleInit,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -14,42 +12,18 @@ import { RegisterDto } from './dto/register.dto';
 import { LogCtx, LoggerService } from '../shared/logger.service';
 import { ConfigService } from '@nestjs/config';
 import { assertParamExists } from '../utils/assert';
-import { GraphQLClient } from 'graphql-request';
-import {
-  MutationAccountRegisterDocument,
-  MutationTokenCreateDocument,
-} from './auth.graphql';
+
 import { getNowUtcDate } from '../utils/date';
 import { SmsService } from '../../app/messaging/sms/sms.service';
+import { IdentityService } from './identity.service';
+import { SaleorAuthService } from './saleor-auth.service';
+import { AppleAuthService } from './apple-auth.service';
 
 import { nanoid } from 'nanoid';
 import bcrypt = require('bcrypt');
 import jwt = require('jsonwebtoken');
 
 const SECRET = process.env.JWT_SECRET;
-
-const client = new GraphQLClient(process.env.GRAPHQL_CLIENT_URL, {
-  headers: {
-    authorization: 'QDLajeCWbdgo4lQ69LRj8H2EsqU46J',
-  },
-});
-
-const cyrb53 = function (str, seed = 0) {
-  let h1 = 0xdeadbeef ^ seed,
-    h2 = 0x41c6ce57 ^ seed;
-  for (let i = 0, ch; i < str.length; i++) {
-    ch = str.charCodeAt(i);
-    h1 = Math.imul(h1 ^ ch, 2654435761);
-    h2 = Math.imul(h2 ^ ch, 1597334677);
-  }
-  h1 =
-    Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^
-    Math.imul(h2 ^ (h2 >>> 13), 3266489909);
-  h2 =
-    Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^
-    Math.imul(h1 ^ (h1 >>> 13), 3266489909);
-  return 4294967296 * (2097151 & h2) + (h1 >>> 0);
-};
 
 @Injectable()
 export class AuthService implements OnModuleInit {
@@ -62,88 +36,268 @@ export class AuthService implements OnModuleInit {
     private readonly smsService: SmsService,
     private readonly loggerService: LoggerService,
     private readonly configService: ConfigService,
+    private readonly identityService: IdentityService,
+    private readonly saleorAuthService: SaleorAuthService,
+    private readonly appleAuthService: AppleAuthService,
   ) {}
 
   async onModuleInit() {
     const { codeSalt } = this.configService.get('sms');
     assertParamExists('sms.codeSalt', codeSalt);
     this.smsCodeSalt = codeSalt;
+
+    const encryptionKey = this.configService.get<string>(
+      'secrets.encryptionKey',
+    );
+    assertParamExists('secrets.encryptionKey', encryptionKey);
   }
+
+  // ---------- public flows ----------
 
   async login(userId: string, code: string) {
     const user = await this.prismaService.user.findUnique({
-      where: {
-        id: userId,
-      },
+      where: { id: userId },
     });
-    if (user.isDeleted) {
-      throw new UnauthorizedException();
-    }
-    if (user?.id) {
-      const hashSmsCode = await bcrypt.hash(code, this.smsCodeSalt);
-      const validSmsRequestCode =
-        await this.prismaService.smsRequestCode.findFirst({
-          where: {
-            value: hashSmsCode,
-            expiresAt: {
-              gt: getNowUtcDate(),
-            },
-          },
-        });
+    if (!user) throw new UnauthorizedException();
 
-      if (validSmsRequestCode) {
-        const tokenCreateReq = await client.request(
-          MutationTokenCreateDocument,
-          {
-            email: `c${user.phone}@inji.kz`,
-            password: `c${user.phone}@inji.kz`,
-          },
-        );
-
-        console.info('TokenCreateReq', JSON.stringify(tokenCreateReq, null, 2));
-
-        if (!tokenCreateReq?.tokenCreate?.token) {
-          throw new UnauthorizedException();
-        }
-
-        const session = await this.prismaService.session.create({
-          data: {
-            user: {
-              connect: { id: user.id },
-            },
-          },
-        });
-        const userRO = this.buildUserRO(
-          {
-            sessionId: session.id,
-          },
-          {
-            userId: user.id,
-          },
-        );
-        await this.userService.setCurrentRefreshToken(userRO.refresh, userId);
-        return {
-          ...userRO,
-          shopToken: tokenCreateReq?.tokenCreate?.token,
-          shopCsrfToken: tokenCreateReq?.tokenCreate?.csrfToken,
-          shopRefreshToken: tokenCreateReq?.tokenCreate?.refreshToken,
-        };
-      }
-      throw new UnauthorizedException();
-    }
-    throw new UnauthorizedException();
+    await this.requireValidSmsCode(code);
+    return this.identityService.issueSession(user);
   }
+
+  async refresh(userId: string, refresh: string) {
+    const user = await this.prismaService.user.findUnique({
+      where: { id: userId },
+    });
+    if (!user?.hashedRefreshToken) throw new UnauthorizedException();
+
+    const isMatching = await bcrypt.compare(refresh, user.hashedRefreshToken);
+    if (!isMatching) throw new UnauthorizedException();
+
+    const sessions = await this.prismaService.session.findMany({
+      where: { userId: user.id, isRevoked: false },
+      orderBy: { createdAt: 'desc' },
+      take: 1,
+    });
+    const session = sessions[0];
+    if (!session) throw new UnauthorizedException();
+
+    const token = this.signJwt(session.id, 7);
+    const newRefresh = this.signJwt(session.id, 30);
+    const hashed = await bcrypt.hash(newRefresh, 10);
+    await this.prismaService.user.update({
+      where: { id: user.id },
+      data: { hashedRefreshToken: hashed },
+    });
+    return { token, refresh: newRefresh };
+  }
+
+  async requestCode({ phone, debug }: { phone: string; debug?: boolean }) {
+    const nowUtcDate = getNowUtcDate();
+    const oneHourAgo = getNowUtcDate();
+    oneHourAgo.setHours(oneHourAgo.getHours() - 1);
+
+    this.loggerService.info(
+      { type: 'requestCode:start', phone, nowUtcDate, oneHourAgo },
+      LogCtx.Auth,
+    );
+
+    const existingActive = await this.prismaService.smsRequestCode.findFirst({
+      where: { phone, expiresAt: { gt: nowUtcDate } },
+      orderBy: { createdAt: 'desc' },
+    });
+    const recentCount = await this.prismaService.smsRequestCode.count({
+      where: { phone, createdAt: { gte: oneHourAgo } },
+    });
+
+    this.loggerService.info(
+      { type: 'requestCode:code', phone, debug, existingActive, recentCount },
+      LogCtx.Auth,
+    );
+
+    const smsCode = await this.smsService.sendSmsCode(`+7${phone}`);
+    if (!smsCode) throw new UnauthorizedException();
+
+    const hash = await bcrypt.hash(smsCode, this.smsCodeSalt);
+    const expiresAt = getNowUtcDate();
+    expiresAt.setMinutes(expiresAt.getMinutes() + 2);
+
+    await this.prismaService.smsRequestCode.create({
+      data: { value: hash, phone, expiresAt, createdAt: nowUtcDate },
+    });
+
+    return { userId: await this.findUserIdByPhone(phone) };
+  }
+
+  async requestWaitCode({ phone, debug }: { phone: string; debug?: boolean }) {
+    this.loggerService.info(
+      { type: 'requestWaitCode:start', phone, debug },
+      LogCtx.Auth,
+    );
+    const waitCode = await this.smsService.sendWaitCode(`+7${phone}`);
+    this.loggerService.info(
+      { type: 'waitCode:sent', phone, waitCode },
+      LogCtx.Auth,
+    );
+    return waitCode;
+  }
+
+  async checkCode(phone: string, code: string) {
+    const nowUtcDate = getNowUtcDate();
+    const hash = await bcrypt.hash(code, this.smsCodeSalt);
+    const smsRequestCode = await this.prismaService.smsRequestCode.findFirst({
+      where: { phone, value: hash, expiresAt: { gt: nowUtcDate } },
+    });
+    return !!smsRequestCode;
+  }
+
+  async register(body: RegisterDto) {
+    this.loggerService.info(
+      { type: 'register:start', phone: body.phone },
+      LogCtx.Auth,
+    );
+
+    const existing = await this.findUserByPhoneIdentity(body.phone);
+    if (existing?.isDeleted) {
+      throw new NotAcceptableException('Аккаунт был удален');
+    }
+    if (existing) {
+      throw new ForbiddenException(
+        'Пользователь с таким телефоном уже зарегистрирован',
+      );
+    }
+
+    await this.requireValidSmsCode(body.code);
+
+    const user = await this.identityService.resolveUserByIdentity(
+      'phone',
+      body.phone,
+      { phone: body.phone },
+    );
+    return this.identityService.issueSession(user);
+  }
+
+  // Used by /v1/auth/tg, /v1/auth/whatsapp — opens a hash-based handshake.
+  // (a) Returns the bot identifiers so the client builds deep-links from config
+  // instead of hardcoding them. (c) Stamps a short TTL on the hash.
+  async authSocialMessenger() {
+    const ttlMinutes =
+      this.configService.get<number>('telegram.authHashTtlMinutes') ?? 10;
+    const expiresAt = new Date(getNowUtcDate().getTime() + ttlMinutes * 60_000);
+
+    const data = await this.prismaService.telegramAuthRequest.create({
+      data: { hash: nanoid(32), expiresAt },
+    });
+    return {
+      hash: data.hash,
+      telegramBot: this.configService.get<string>('telegram.authBotUsername'),
+      whatsappPhone: this.configService.get<string>('telegram.whatsappPhone'),
+    };
+  }
+
+  // Completes the hash handshake: the messenger handler has by now written
+  // back the user's phone for this hash. We treat that phone as a verified
+  // 'phone' identity and issue a session.
+  //
+  // (c) The hash is single-use and time-limited. While the bot has not yet
+  // written the phone (or the hash is expired/already consumed) we return null
+  // so polling clients keep waiting / give up by their own timeout, instead of
+  // 401-ing (which would trip the client's token-refresh interceptor).
+  async authTelegramWithHash(hash: string) {
+    const data = await this.prismaService.telegramAuthRequest.findFirst({
+      where: { hash },
+    });
+    if (!data || data.hash !== hash) throw new UnauthorizedException();
+    if (data.usedAt) return null; // already consumed
+    if (data.expiresAt && data.expiresAt.getTime() < getNowUtcDate().getTime()) {
+      return null; // expired
+    }
+    if (!data.phone) return null; // bot has not written the phone yet
+
+    const phone = data.phone.slice(-10);
+    if (!phone) return null;
+
+    // Atomically claim the hash so a session can be issued only once, even if
+    // two checks race (web polling + native foreground re-check).
+    const claim = await this.prismaService.telegramAuthRequest.updateMany({
+      where: { hash, usedAt: null },
+      data: { usedAt: getNowUtcDate() },
+    });
+    if (claim.count === 0) return null; // lost the race — already consumed
+
+    const user = await this.identityService.resolveUserByIdentity(
+      'phone',
+      phone,
+      { phone },
+    );
+    return this.identityService.issueSession(user);
+  }
+
+  async authCallWaitCode(id: string, phone: string) {
+    const data = await this.prismaService.callWaitCode.findFirst({
+      where: { id, userPhone: phone },
+    });
+    if (!data?.phone || !data.isConfirmed) {
+      throw new UnauthorizedException();
+    }
+    const userPhone = data.userPhone?.slice(-10);
+    if (!userPhone) return;
+
+    const user = await this.identityService.resolveUserByIdentity(
+      'phone',
+      userPhone,
+      { phone: userPhone },
+    );
+    return this.identityService.issueSession(user);
+  }
+
+  // ---------- Apple ----------
+
+  async appleNonce() {
+    return this.appleAuthService.issueNonce();
+  }
+
+  async appleSignIn(payload: {
+    identityToken: string;
+    authorizationCode?: string;
+    nonce: string;
+    fullName?: { givenName?: string; familyName?: string };
+  }) {
+    return this.appleAuthService.signIn(payload);
+  }
+
+  // ---------- account ----------
+
+  // Soft-delete the user, revoke all sessions, revoke Apple grants, and
+  // delete the Saleor customer. Best-effort on external systems — local
+  // soft-delete always succeeds.
+  async deleteAccount(userId: string) {
+    this.loggerService.d(LogCtx.Auth, 'deleteAccount', { userId });
+    const user = await this.prismaService.user.findUnique({
+      where: { id: userId },
+    });
+    if (!user) throw new UnauthorizedException();
+
+    await this.appleAuthService.revokeAllForUser(userId);
+    await this.saleorAuthService.deleteAccount(user);
+
+    await this.prismaService.session.updateMany({
+      where: { userId, isRevoked: false },
+      data: { isRevoked: true },
+    });
+    await this.prismaService.user.update({
+      where: { id: userId },
+      data: { isDeleted: true, hashedRefreshToken: null },
+    });
+  }
+
+  // ---------- legacy helpers ----------
 
   async getAuthorizedRequestUserFromBearer(req: any) {
     const authToken = req.headers.authorization;
-    if (!authToken) {
-      return null;
-    }
-    const [bearer, jwt] = authToken.split(' ');
-    if (bearer !== 'Bearer' || !jwt) {
-      return null;
-    }
-    return this.validateToken(jwt);
+    if (!authToken) return null;
+    const [bearer, token] = authToken.split(' ');
+    if (bearer !== 'Bearer' || !token) return null;
+    return this.validateToken(token);
   }
 
   async getAuthorizedRequestUser(req: any) {
@@ -154,84 +308,12 @@ export class AuthService implements OnModuleInit {
     return null;
   }
 
-  async refresh(userId: string, refresh: string) {
-    const user = await this.prismaService.user.findUnique({
-      where: {
-        id: userId,
-      },
-    });
-    const isRefreshTokenMatching = await bcrypt.compare(
-      refresh,
-      user.hashedRefreshToken,
-    );
-    if (user?.id && isRefreshTokenMatching) {
-      const sessions = await this.prismaService.session.findMany({
-        where: {
-          userId: user.id,
-        },
-      });
-      const userRO = this.buildUserRO(
-        {
-          sessionId: sessions[0].id,
-        },
-        {
-          userId: user.id,
-        },
-      );
-      await this.userService.setCurrentRefreshToken(userRO.refresh, userId);
-      return userRO;
-    }
-    throw new UnauthorizedException();
-  }
-
-  validateToken(jwt: string) {
+  validateToken(token: string) {
     try {
-      const isValid = this.jwtService.verify(jwt);
-      return isValid;
+      return this.jwtService.verify(token);
     } catch (e) {
       throw new UnauthorizedException();
     }
-  }
-
-  public generateJWT(
-    { sessionId }: { sessionId: string },
-    { userId }: { userId: string },
-    expDays: number,
-  ) {
-    const today = new Date();
-    const exp = new Date(today);
-    exp.setDate(today.getDate() + expDays);
-
-    return jwt.sign(
-      {
-        sessionId,
-        exp: exp.getTime() / 1000,
-      },
-      SECRET,
-    );
-  }
-
-  private buildUserRO(
-    { sessionId }: { sessionId: string },
-    { userId }: { userId: string },
-  ) {
-    const userRO = {
-      token: this.generateJWT({ sessionId }, { userId }, 7),
-      refresh: this.generateJWT({ sessionId }, { userId }, 30),
-    };
-    return userRO;
-  }
-
-  async deleteUser(userId: string) {
-    this.loggerService.d(LogCtx.Auth, 'DeleteUser', { userId });
-    return this.prismaService.user.update({
-      where: {
-        id: userId,
-      },
-      data: {
-        isDeleted: true,
-      },
-    });
   }
 
   async addDevice(userId: string, deviceId: string, pushToken: string) {
@@ -241,506 +323,53 @@ export class AuthService implements OnModuleInit {
       pushToken,
     });
     const exist = await this.prismaService.userDevice.findFirst({
-      where: {
-        userId,
-        deviceId,
-        isRevoked: false,
-      },
+      where: { userId, deviceId, isRevoked: false },
     });
     if (!exist) {
       return this.prismaService.userDevice.create({
-        data: {
-          userId,
-          deviceId,
-          pushToken,
-        },
+        data: { userId, deviceId, pushToken },
       });
-    } else {
-      if (exist.pushToken === pushToken) {
-        return exist;
-      }
-      await this.prismaService.userDevice.update({
-        data: {
-          isRevoked: true,
-        },
-        where: {
-          id: exist.id,
-        },
-      });
-      const userDevice = await this.prismaService.userDevice.create({
-        data: {
-          userId,
-          deviceId,
-          pushToken,
-        },
-      });
-      return userDevice;
     }
+    if (exist.pushToken === pushToken) return exist;
+    await this.prismaService.userDevice.update({
+      where: { id: exist.id },
+      data: { isRevoked: true },
+    });
+    return this.prismaService.userDevice.create({
+      data: { userId, deviceId, pushToken },
+    });
   }
 
-  async requestCode({ phone, debug }: { phone: string; debug?: boolean }) {
-    const nowUtcDate = getNowUtcDate();
-    const oneHourAgo = getNowUtcDate();
-    oneHourAgo.setHours(oneHourAgo.getHours() - 1);
+  // ---------- private ----------
 
-    this.loggerService.info(
-      {
-        type: 'requestCode:start',
-        phone,
-        nowUtcDate,
-        oneHourAgo,
-      },
-      LogCtx.Auth,
-    );
-
-    const smsRequestCode = await this.prismaService.smsRequestCode.findFirst({
-      where: {
-        phone,
-        expiresAt: {
-          gt: nowUtcDate,
-        },
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
-
-    const smsRequestCodesOneHourAgo =
-      await this.prismaService.smsRequestCode.findMany({
-        where: {
-          phone,
-          createdAt: {
-            gte: oneHourAgo,
-          },
-        },
-      });
-
-    this.loggerService.info(
-      {
-        type: 'requestCode:code',
-        phone,
-        debug,
-        smsRequestCode,
-        smsRequestCodesOneHourAgo,
-      },
-      LogCtx.Auth,
-    );
-
-    const smsCode = await this.smsService.sendSmsCode(`+7${phone}`);
-
-    if (!smsCode) {
-      throw new UnauthorizedException();
-    }
-
-    const hash = await bcrypt.hash(smsCode, this.smsCodeSalt);
-
-    const expiresAt = getNowUtcDate();
-    expiresAt.setMinutes(expiresAt.getMinutes() + 2);
-
-    await this.prismaService.smsRequestCode.create({
-      data: {
-        value: hash,
-        phone,
-        expiresAt,
-        createdAt: nowUtcDate,
-      },
-    });
-
-    this.loggerService.info(
-      {
-        type: 'requestCode:sent',
-        phone,
-        hash,
-        smsCode,
-        expiresAt,
-      },
-      LogCtx.Auth,
-    );
-
-    const user = await this.prismaService.user.findUnique({
-      where: {
-        phone,
-      },
-    });
-
-    return {
-      userId: user?.id || null,
-    };
-  }
-
-  async requestWaitCode({ phone, debug }: { phone: string; debug?: boolean }) {
-    const nowUtcDate = getNowUtcDate();
-    const oneHourAgo = getNowUtcDate();
-    oneHourAgo.setHours(oneHourAgo.getHours() - 1);
-
-    this.loggerService.info(
-      {
-        type: 'requestCode:start',
-        phone,
-        nowUtcDate,
-        oneHourAgo,
-      },
-      LogCtx.Auth,
-    );
-
-    const smsRequestCode = await this.prismaService.smsRequestCode.findFirst({
-      where: {
-        phone,
-        expiresAt: {
-          gt: nowUtcDate,
-        },
-      },
-      orderBy: {
-        createdAt: 'desc',
-      },
-    });
-
-    const smsRequestCodesOneHourAgo =
-      await this.prismaService.smsRequestCode.findMany({
-        where: {
-          phone,
-          createdAt: {
-            gte: oneHourAgo,
-          },
-        },
-      });
-
-    this.loggerService.info(
-      {
-        type: 'requestCode:code',
-        phone,
-        debug,
-        smsRequestCode,
-        smsRequestCodesOneHourAgo,
-      },
-      LogCtx.Auth,
-    );
-
-    const waitCode = await this.smsService.sendWaitCode(`+7${phone}`);
-
-    this.loggerService.info(
-      {
-        type: 'waitCode:sent',
-        phone,
-        waitCode,
-      },
-      LogCtx.Auth,
-    );
-
-    return waitCode;
-  }
-
-  async checkCode(phone: string, code: string) {
-    const nowUtcDate = getNowUtcDate();
+  private async requireValidSmsCode(code: string): Promise<void> {
     const hash = await bcrypt.hash(code, this.smsCodeSalt);
-    const smsRequestCode = await this.prismaService.smsRequestCode.findFirst({
-      where: {
-        phone: phone,
-        value: hash,
-        expiresAt: {
-          gt: nowUtcDate,
-        },
-      },
+    const valid = await this.prismaService.smsRequestCode.findFirst({
+      where: { value: hash, expiresAt: { gt: getNowUtcDate() } },
     });
-    if (!smsRequestCode) {
-      return false;
-    }
-    return true;
-  }
-
-  async register(body: RegisterDto) {
-    this.loggerService.info(
-      {
-        type: 'register:start',
-        phone: body.phone,
-        body,
-      },
-      LogCtx.Auth,
-    );
-
-    const user = await this.prismaService.user.findUnique({
-      where: {
-        phone: body.phone,
-      },
-    });
-
-    this.loggerService.info(
-      {
-        type: 'register:user',
-        phone: body.phone,
-        user,
-      },
-      LogCtx.Auth,
-    );
-
-    if (user?.isDeleted) {
-      throw new NotAcceptableException('Аккаунт был удален');
-    }
-
-    if (user?.id) {
-      throw new ForbiddenException(
-        'Пользователь с таким телефоном уже зарегистрирован',
-      );
-    }
-
-    const hashSmsCode = await bcrypt.hash(body.code, this.smsCodeSalt);
-    const validSmsRequestCode =
-      await this.prismaService.smsRequestCode.findFirst({
-        where: {
-          value: hashSmsCode,
-          expiresAt: {
-            gt: getNowUtcDate(),
-          },
-        },
-      });
-
-    this.loggerService.info(
-      {
-        type: 'register:hash',
-        phone: body.phone,
-        code: body.code,
-        hashSmsCode,
-        validSmsRequestCode,
-      },
-      LogCtx.Auth,
-    );
-
-    if (!validSmsRequestCode) {
+    if (!valid) {
       throw new UnauthorizedException(
         'Неверный код доступа или время жизни кода истекло',
       );
     }
-
-    const saleorUser = await client.request(MutationAccountRegisterDocument, {
-      email: `c${body.phone}@inji.kz`,
-      password: `c${body.phone}@inji.kz`,
-      channel: 'mobile',
-      redirectUrl: 'https://core.inji.kz',
-    });
-
-    this.loggerService.info(
-      {
-        type: 'register:saleor-user-create',
-        saleorUser,
-        phone: body.phone,
-      },
-      LogCtx.Auth,
-    );
-
-    if (!saleorUser?.accountRegister?.user?.email) {
-      throw new NotAcceptableException();
-    }
-
-    const createdUser = await this.prismaService.user.create({
-      data: {
-        id: nanoid(16),
-        phone: body.phone,
-      },
-    });
-
-    this.loggerService.info(
-      {
-        type: 'register:user-create',
-        createdUser,
-        phone: body.phone,
-      },
-      LogCtx.Auth,
-    );
-
-    const tokenCreateReq = await client.request(MutationTokenCreateDocument, {
-      email: `c${createdUser.phone}@inji.kz`,
-      password: `c${createdUser.phone}@inji.kz`,
-    });
-
-    if (!tokenCreateReq?.tokenCreate?.token) {
-      throw new UnauthorizedException();
-    }
-
-    const session = await this.prismaService.session.create({
-      data: {
-        user: {
-          connect: { id: createdUser.id },
-        },
-      },
-    });
-
-    const userRO = this.buildUserRO(
-      {
-        sessionId: session.id,
-      },
-      {
-        userId: createdUser.id,
-      },
-    );
-
-    await this.userService.setCurrentRefreshToken(
-      userRO.refresh,
-      createdUser.id,
-    );
-
-    return {
-      ...userRO,
-      shopToken: tokenCreateReq?.tokenCreate?.token,
-      shopCsrfToken: tokenCreateReq?.tokenCreate?.csrfToken,
-      shopRefreshToken: tokenCreateReq?.tokenCreate?.refreshToken,
-    };
   }
 
-  /**
-   * Авторизация через мессенджеры
-   */
-
-  public async authSocialMessenger() {
-    const data = await this.prismaService.telegramAuthRequest.create({
-      data: {
-        hash: nanoid(32),
-      },
-    });
-    return {
-      hash: data.hash,
-    };
+  private async findUserIdByPhone(phone: string): Promise<string | null> {
+    const user = await this.findUserByPhoneIdentity(phone);
+    return user?.id ?? null;
   }
 
-  public async authTelegramWithHash(hash: string) {
-    const data = await this.prismaService.telegramAuthRequest.findFirst({
-      where: { hash },
+  private async findUserByPhoneIdentity(phone: string) {
+    const identity = await this.prismaService.authIdentity.findUnique({
+      where: { provider_subject: { provider: 'phone', subject: phone } },
+      include: { user: true },
     });
-    if (!data || data.hash !== hash) {
-      throw new UnauthorizedException();
-    }
-    if (!data?.phone) {
-      return;
-    }
-    const phone = data.phone?.slice(-10);
-    if (phone) {
-      return this.authUserByPhone(phone);
-    }
+    return identity?.user ?? null;
   }
 
-  public async authCallWaitCode(id: string, phone: string) {
-    const data = await this.prismaService.callWaitCode.findFirst({
-      where: { id, userPhone: phone },
-    });
-    console.info('!!', id, phone, data);
-    if (!data?.phone || !data.isConfirmed) {
-      throw new UnauthorizedException();
-    }
-    const userPhone = data.userPhone?.slice(-10);
-    if (userPhone) {
-      return this.authUserByPhone(userPhone);
-    }
-  }
-
-  public async authUserByPhone(phone: string) {
-    /**
-     * Получаем информацию о пользователе по номеру телефона
-     */
-    const user = await this.prismaService.user.findFirst({
-      where: {
-        phone,
-      },
-    });
-    /**
-     *
-     * Если пользователь зарегистрирован
-     */
-    if (user?.id) {
-      const tokenCreateReq = await client.request(MutationTokenCreateDocument, {
-        email: `c${user.phone}@inji.kz`,
-        password: `c${user.phone}@inji.kz`,
-      });
-
-      if (!tokenCreateReq?.tokenCreate?.token) {
-        throw new UnauthorizedException();
-      }
-
-      const session = await this.prismaService.session.create({
-        data: {
-          user: {
-            connect: { id: user.id },
-          },
-        },
-      });
-
-      const userRO = this.buildUserRO(
-        {
-          sessionId: session.id,
-        },
-        {
-          userId: user.id,
-        },
-      );
-
-      await this.userService.setCurrentRefreshToken(userRO.refresh, user.id);
-
-      return {
-        ...userRO,
-        shopToken: tokenCreateReq?.tokenCreate?.token,
-        shopCsrfToken: tokenCreateReq?.tokenCreate?.csrfToken,
-        shopRefreshToken: tokenCreateReq?.tokenCreate?.refreshToken,
-      };
-    } else {
-      /**
-       * Если пользователь не зарегистрирован
-       */
-      console.info('mUst regitser user', phone);
-      const saleorUser = await client.request(MutationAccountRegisterDocument, {
-        email: `c${phone}@inji.kz`,
-        password: `c${phone}@inji.kz`,
-        channel: 'default-channel',
-        redirectUrl: 'https://core.inji.kz',
-      });
-
-      console.info('regiter request', saleorUser.accountRegister.accountErrors);
-
-      if (!saleorUser?.accountRegister?.user?.email) {
-        throw new NotAcceptableException();
-      }
-
-      const createdUser = await this.prismaService.user.create({
-        data: {
-          id: nanoid(16),
-          phone,
-        },
-      });
-
-      const tokenCreateReq = await client.request(MutationTokenCreateDocument, {
-        email: `c${createdUser.phone}@inji.kz`,
-        password: `c${createdUser.phone}@inji.kz`,
-      });
-
-      if (!tokenCreateReq?.tokenCreate?.token) {
-        throw new UnauthorizedException();
-      }
-
-      const session = await this.prismaService.session.create({
-        data: {
-          user: {
-            connect: { id: createdUser.id },
-          },
-        },
-      });
-
-      const userRO = this.buildUserRO(
-        {
-          sessionId: session.id,
-        },
-        {
-          userId: createdUser.id,
-        },
-      );
-
-      await this.userService.setCurrentRefreshToken(
-        userRO.refresh,
-        createdUser.id,
-      );
-
-      return {
-        ...userRO,
-        shopToken: tokenCreateReq?.tokenCreate?.token,
-        shopCsrfToken: tokenCreateReq?.tokenCreate?.csrfToken,
-        shopRefreshToken: tokenCreateReq?.tokenCreate?.refreshToken,
-      };
-    }
+  private signJwt(sessionId: string, expDays: number): string {
+    const exp = new Date();
+    exp.setDate(exp.getDate() + expDays);
+    return jwt.sign({ sessionId, exp: exp.getTime() / 1000 }, SECRET);
   }
 }
