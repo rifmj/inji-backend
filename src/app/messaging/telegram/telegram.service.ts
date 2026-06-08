@@ -7,6 +7,12 @@ import { ConfigService } from '@nestjs/config';
 // TelegramController (versioned → /v1/telegram/webhook).
 export const TELEGRAM_WEBHOOK_PATH = '/v1/telegram/webhook';
 
+// How long to wait before relaunching the long-polling auth bot after the
+// telegraf polling loop dies (e.g. a 409 Conflict from another getUpdates
+// consumer). Without an automatic relaunch the bot stays silent until the
+// process restarts.
+const TELEGRAM_POLL_RELAUNCH_MS = 15_000;
+
 @Injectable()
 export class TelegramService implements OnModuleInit {
   constructor(
@@ -21,6 +27,11 @@ export class TelegramService implements OnModuleInit {
   authBot: Telegraf;
 
   chats: Record<string, string> = {};
+
+  // Set true on graceful shutdown so the polling auto-relaunch loop stops.
+  private authBotStopped = false;
+
+  private exitListenersRegistered = false;
 
   private get useWebhook(): boolean {
     return !!this.configService.get<boolean>('telegram.useWebhook');
@@ -55,14 +66,13 @@ export class TelegramService implements OnModuleInit {
     const token = this.configService.get<string>('telegram.authBotToken');
     if (!token) return;
 
-    const authBot = new Telegraf(token);
-    this.authBot = authBot;
-    this.registerAuthHandlers(authBot);
-
     if (this.useWebhook) {
       // (b) Webhook mode — required on serverless/Vercel where long-polling
       // does not survive. Telegram pushes updates to TelegramController, which
       // forwards them to handleAuthUpdate().
+      const authBot = new Telegraf(token);
+      this.authBot = authBot;
+      this.registerAuthHandlers(authBot);
       const domain = (
         this.configService.get<string>('telegram.webhookDomain') || ''
       ).replace(/\/+$/, '');
@@ -79,11 +89,41 @@ export class TelegramService implements OnModuleInit {
       return;
     }
 
-    // Long-polling mode — for local/non-serverless deployments.
-    authBot.launch().then(() => {
-      console.info('TelegramService:authBotLaunch');
-    });
-    this.createExitListeners();
+    // Long-polling mode — for local/non-serverless deployments. Polling is
+    // supervised so it survives transient failures (see startAuthBotPolling).
+    this.registerExitListeners();
+    this.startAuthBotPolling(token);
+  }
+
+  // Starts long-polling on a fresh Telegraf instance and relaunches it if the
+  // polling loop dies. telegraf tears down polling on a 409 Conflict (another
+  // getUpdates consumer) and never restarts it, so without supervision a single
+  // transient conflict leaves the auth bot permanently silent.
+  private startAuthBotPolling(token: string): void {
+    if (this.authBotStopped) return;
+    const authBot = new Telegraf(token);
+    this.authBot = authBot;
+    this.registerAuthHandlers(authBot);
+    // launch() resolves when the bot is stopped, and rejects on a polling error.
+    authBot
+      .launch()
+      .then(() => console.info('TelegramService:authBotPollingStopped'))
+      .catch((err) => {
+        console.error(
+          'TelegramService:authBotPollingError; relaunching soon:',
+          (err as Error)?.message ?? err,
+        );
+        try {
+          authBot.stop('relaunch');
+        } catch {
+          // already stopped
+        }
+        if (this.authBotStopped) return;
+        setTimeout(
+          () => this.startAuthBotPolling(token),
+          TELEGRAM_POLL_RELAUNCH_MS,
+        );
+      });
   }
 
   // Registers the /start + contact-share handlers. Used by both webhook and
@@ -148,15 +188,27 @@ export class TelegramService implements OnModuleInit {
     await this.authBot.handleUpdate(update as any);
   }
 
-  createExitListeners() {
-    process.once('SIGINT', () => {
-      this.bot?.stop('SIGINT');
-      this.authBot?.stop('SIGINT');
-    });
-    process.once('SIGTERM', () => {
-      this.bot?.stop('SIGTERM');
-      this.authBot?.stop('SIGTERM');
-    });
+  // Registered once. Marks the bot as intentionally stopped (so the polling
+  // supervisor doesn't relaunch) and stops both bots, tolerating the case
+  // where a bot was never actually running ("Bot is not running!").
+  private registerExitListeners(): void {
+    if (this.exitListenersRegistered) return;
+    this.exitListenersRegistered = true;
+    const stopAll = (signal: 'SIGINT' | 'SIGTERM') => () => {
+      this.authBotStopped = true;
+      try {
+        this.bot?.stop(signal);
+      } catch {
+        // notification bot was never launched
+      }
+      try {
+        this.authBot?.stop(signal);
+      } catch {
+        // auth bot was not running
+      }
+    };
+    process.once('SIGINT', stopAll('SIGINT'));
+    process.once('SIGTERM', stopAll('SIGTERM'));
   }
 
   async onModuleInit(): Promise<void> {
