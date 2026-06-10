@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { HttpModule } from '@nestjs/axios';
+import { ConfigService } from '@nestjs/config';
 import { HooksService } from './hooks.service';
 import { OrderHooksService } from './order-hooks.service';
 import { TelegramService } from '../messaging/telegram/telegram.service';
@@ -29,6 +30,10 @@ describe('HooksService', () => {
         {
           provide: PushService,
           useValue: { sendToUser: jest.fn(), sendToDevice: jest.fn() },
+        },
+        {
+          provide: ConfigService,
+          useValue: { get: jest.fn() },
         },
       ],
     }).compile();

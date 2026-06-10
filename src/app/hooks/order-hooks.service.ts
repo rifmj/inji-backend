@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { LoggerService } from '../../core/shared/logger.service';
 import { TelegramService } from '../messaging/telegram/telegram.service';
 import { HttpService } from '@nestjs/axios';
@@ -28,10 +29,21 @@ export class OrderHooksService {
     private readonly telegramService: TelegramService,
     private readonly httpService: HttpService,
     private readonly pushService: PushService,
+    private readonly configService: ConfigService,
   ) {}
 
   setGraphQLClient(client: GraphQLClient) {
     this.client = client;
+  }
+
+  // Base URL for the courier order-control panel (GET /push/control/:orderId,
+  // served by this backend). Override with ORIGIN_HOST; defaults to the current
+  // public host. Previously hardcoded to the decommissioned core.inji.kz.
+  private orderControlUrl(orderId: string | number): string {
+    const origin =
+      this.configService.get<{ originHost?: string }>('common')?.originHost ||
+      'https://api.store.inji.kz';
+    return `${origin}/push/control/${orderId}`;
   }
 
   private formatOrderLines(lines: OrderLine[]): string {
@@ -60,7 +72,7 @@ export class OrderHooksService {
       \n email: ${order.user_email}
       \nТовары в заказе: ${formattedLines}. 
       \nОбщий вес - ${order.weight}
-      \nУправление - https://core.inji.kz/push/control/${order.id}
+      \nУправление - ${this.orderControlUrl(order.id)}
       \nАдрес доставки: ${this.formatAddress(order.billing_address)}`;
 
     await this.telegramService.sendMessage(message);
