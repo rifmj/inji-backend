@@ -11,9 +11,6 @@ export default () => {
     PG_USERNAME,
     PG_PWD,
     PG_DB,
-    TWILIO_ACCOUNT_SID,
-    TWILIO_AUTH_TOKEN,
-    TWILIO_FROM_NUMBER,
     ENV,
     FIREBASE_PRIVATE_KEY,
     FIREBASE_PRIVATE_KEY_ID,
@@ -22,7 +19,6 @@ export default () => {
     FIREBASE_CLIENT_ID,
     FIREBASE_CLIENT_X509_CERT_URL,
     ORIGIN_HOST,
-    TWILIO_WHATSAPP_SERVICE_SID,
     SESSION_SECRET,
     TELEGRAM_NOTIFICATION_BOT_TOKEN,
     TELEGRAM_AUTH_BOT_TOKEN,
@@ -80,12 +76,6 @@ export default () => {
     sms: {
       enable: false,
       codeSalt: '$2b$10$u6bhDutLG1Wu/nvvVN3LGu',
-      twilio: {
-        accountSid: TWILIO_ACCOUNT_SID,
-        authToken: TWILIO_AUTH_TOKEN,
-        fromNumber: TWILIO_FROM_NUMBER,
-        whatsappServiceSid: TWILIO_WHATSAPP_SERVICE_SID,
-      },
     },
     telegram: {
       notificationBotToken: TELEGRAM_NOTIFICATION_BOT_TOKEN,

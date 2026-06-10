@@ -8,7 +8,7 @@ export class RemoteConfigController {
       auth: {
         debug_mode: false,
         disable_tg: true,
-        disable_whatsapp: true,
+        disable_whatsapp: false,
         agreement_url: 'https://salem.inji.kz/privacypolicy/',
       },
       catalog: {
