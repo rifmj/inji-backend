@@ -176,6 +176,21 @@ export class AuthService implements OnModuleInit {
     return this.identityService.issueSession(user);
   }
 
+  // Guards the Green API WhatsApp webhook. Green API echoes the instance's
+  // configured "webhookUrlToken" back as an "Authorization: Bearer <token>"
+  // header on every delivery. We compare it against telegram.whatsappWebhookToken.
+  // Mirrors TelegramService.isValidWebhookSecret: when no token is configured we
+  // accept (fail-open) so unconfigured local envs keep working — set the env var
+  // (and the matching Green API token) to actually enforce it.
+  isValidWhatsappWebhookToken(authHeader?: string): boolean {
+    const expected = this.configService.get<string>(
+      'telegram.whatsappWebhookToken',
+    );
+    if (!expected) return true;
+    const token = (authHeader ?? '').replace(/^Bearer\s+/i, '').trim();
+    return token === expected;
+  }
+
   // Used by /v1/auth/tg, /v1/auth/whatsapp — opens a hash-based handshake.
   // (a) Returns the bot identifiers so the client builds deep-links from config
   // instead of hardcoding them. (c) Stamps a short TTL on the hash.

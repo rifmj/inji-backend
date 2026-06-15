@@ -24,6 +24,7 @@ export default () => {
     TELEGRAM_AUTH_BOT_TOKEN,
     TELEGRAM_AUTH_BOT_USERNAME,
     TELEGRAM_AUTH_WHATSAPP_PHONE,
+    TELEGRAM_AUTH_WHATSAPP_WEBHOOK_TOKEN,
     TELEGRAM_AUTH_BOT_ENABLED,
     TELEGRAM_AUTH_HASH_TTL_MINUTES,
     TELEGRAM_WEBHOOK_DOMAIN,
@@ -85,6 +86,11 @@ export default () => {
       authBotUsername: TELEGRAM_AUTH_BOT_USERNAME,
       // WhatsApp number (digits only, e.g. "77474438640") for the WhatsApp flow.
       whatsappPhone: TELEGRAM_AUTH_WHATSAPP_PHONE,
+      // Shared secret guarding the Green API WhatsApp webhook. Set the same
+      // value as the instance's "webhookUrlToken" so Green API sends it back as
+      // "Authorization: Bearer <token>". Leave unset to accept all (fail-open,
+      // matches webhookSecret below) — only useful for local/unconfigured envs.
+      whatsappWebhookToken: TELEGRAM_AUTH_WHATSAPP_WEBHOOK_TOKEN,
       // Force-enable the polling auth bot regardless of ENV. The bot is skipped
       // by default on ENV=dev (so dev laptops don't poll), but a shared
       // dev/staging box can opt in by setting TELEGRAM_AUTH_BOT_ENABLED=true.

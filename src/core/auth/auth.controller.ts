@@ -2,10 +2,12 @@ import {
   Body,
   Controller,
   Delete,
+  Headers,
   Post,
   Req,
   Res,
   Session,
+  UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
@@ -193,7 +195,17 @@ export class AuthController {
   }
 
   @Post('whatsapp/hook')
-  async authWhatsappHook(@Body() body: any) {
+  async authWhatsappHook(
+    @Body() body: any,
+    @Headers('authorization') authHeader?: string,
+  ) {
+    // Green API webhooks are unauthenticated by default — without this check any
+    // caller who learns a 32-char hash could inject an arbitrary phone for it and
+    // then claim a session via /whatsapp/hash. Require the configured Bearer token.
+    if (!this.authService.isValidWhatsappWebhookToken(authHeader)) {
+      throw new UnauthorizedException();
+    }
+
     if (body.typeWebhook !== 'incomingMessageReceived') return;
 
     const hash = (
