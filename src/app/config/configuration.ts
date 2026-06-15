@@ -25,6 +25,9 @@ export default () => {
     TELEGRAM_AUTH_BOT_USERNAME,
     TELEGRAM_AUTH_WHATSAPP_PHONE,
     TELEGRAM_AUTH_WHATSAPP_WEBHOOK_TOKEN,
+    GREEN_API_ID_INSTANCE,
+    GREEN_API_API_TOKEN_INSTANCE,
+    GREEN_API_BASE_URL,
     TELEGRAM_AUTH_BOT_ENABLED,
     TELEGRAM_AUTH_HASH_TTL_MINUTES,
     TELEGRAM_WEBHOOK_DOMAIN,
@@ -108,6 +111,15 @@ export default () => {
         TELEGRAM_USE_WEBHOOK != null
           ? TELEGRAM_USE_WEBHOOK === 'true'
           : !!TELEGRAM_WEBHOOK_DOMAIN,
+    },
+    // Green API outbound — used to reply to the user on WhatsApp after their
+    // login code is matched. idInstance/apiTokenInstance come from the Green API
+    // console (the SAME instance whose webhook posts to /v1/auth/whatsapp/hook).
+    // When unset, outbound replies are silently skipped (inbound auth still works).
+    greenApi: {
+      idInstance: GREEN_API_ID_INSTANCE,
+      apiTokenInstance: GREEN_API_API_TOKEN_INSTANCE,
+      baseUrl: GREEN_API_BASE_URL || 'https://api.green-api.com',
     },
     secrets: {
       // 32-byte key (64 hex chars) for AES-256-GCM. Required.

@@ -11,6 +11,7 @@ import { IdentityService } from './identity.service';
 import { SaleorAuthService } from './saleor-auth.service';
 import { AppleAuthService } from './apple-auth.service';
 import { getNowUtcDate } from '../utils/date';
+import { AUTH_CODE_LENGTH, AUTH_CODE_RE } from './auth-code';
 
 const VALID_HASH = 'a'.repeat(32);
 const SESSION = { accessToken: 'access', refreshToken: 'refresh' };
@@ -101,20 +102,68 @@ describe('AuthService — WhatsApp / Telegram hash handshake', () => {
     });
   });
 
+  describe('sendWhatsappReply', () => {
+    const realFetch = global.fetch;
+    afterEach(() => {
+      global.fetch = realFetch;
+    });
+
+    it('skips the call when Green API credentials are not configured', async () => {
+      const fetchMock = jest.fn();
+      global.fetch = fetchMock as any;
+
+      await service.sendWhatsappReply('77001234567@c.us', 'hi');
+
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it('POSTs the message to Green API sendMessage when configured', async () => {
+      configValues['greenApi.idInstance'] = '1101';
+      configValues['greenApi.apiTokenInstance'] = 'tok';
+      configValues['greenApi.baseUrl'] = 'https://api.green-api.com';
+      const fetchMock = jest.fn().mockResolvedValue({ ok: true });
+      global.fetch = fetchMock as any;
+
+      await service.sendWhatsappReply('77001234567@c.us', 'hello');
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      const [url, init] = fetchMock.mock.calls[0];
+      expect(url).toBe(
+        'https://api.green-api.com/waInstance1101/sendMessage/tok',
+      );
+      expect(init.method).toBe('POST');
+      expect(JSON.parse(init.body)).toEqual({
+        chatId: '77001234567@c.us',
+        message: 'hello',
+      });
+    });
+
+    it('never throws when the Green API call fails', async () => {
+      configValues['greenApi.idInstance'] = '1101';
+      configValues['greenApi.apiTokenInstance'] = 'tok';
+      global.fetch = jest.fn().mockRejectedValue(new Error('network')) as any;
+
+      await expect(
+        service.sendWhatsappReply('77001234567@c.us', 'hello'),
+      ).resolves.toBeUndefined();
+    });
+  });
+
   describe('authSocialMessenger', () => {
-    it('creates a 32-char hash with a future TTL and returns the bot identifiers', async () => {
+    it('creates a short code with a future TTL and returns the bot identifiers', async () => {
       telegramAuthRequest.create.mockImplementation(async ({ data }) => data);
 
       // The service stamps TTL off getNowUtcDate(), so anchor the test there too.
       const before = getNowUtcDate().getTime();
       const result = await service.authSocialMessenger();
 
-      expect(result.hash).toHaveLength(32);
+      expect(result.hash).toHaveLength(AUTH_CODE_LENGTH);
+      expect(result.hash).toMatch(AUTH_CODE_RE);
       expect(result.telegramBot).toBe('inji_dev_auth_bot');
       expect(result.whatsappPhone).toBe('77474438640');
 
       const arg = telegramAuthRequest.create.mock.calls[0][0].data;
-      expect(arg.hash).toHaveLength(32);
+      expect(arg.hash).toHaveLength(AUTH_CODE_LENGTH);
       // ~10 min TTL from now (slack for scheduling, but well under 11 min).
       expect(arg.expiresAt.getTime()).toBeGreaterThan(before + 9 * 60_000);
       expect(arg.expiresAt.getTime()).toBeLessThan(before + 11 * 60_000);

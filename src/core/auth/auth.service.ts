@@ -19,11 +19,16 @@ import { IdentityService } from './identity.service';
 import { SaleorAuthService } from './saleor-auth.service';
 import { AppleAuthService } from './apple-auth.service';
 
-import { nanoid } from 'nanoid';
+import { generateAuthCode } from './auth-code';
 import bcrypt = require('bcrypt');
 import jwt = require('jsonwebtoken');
 
 const SECRET = process.env.JWT_SECRET;
+
+// Confirmation sent back over WhatsApp once the user's code is matched to their
+// phone. Edit here to change the wording.
+const WHATSAPP_LOGIN_REPLY =
+  'Готово ✅ Вход подтверждён — можете вернуться на сайт.';
 
 @Injectable()
 export class AuthService implements OnModuleInit {
@@ -191,6 +196,42 @@ export class AuthService implements OnModuleInit {
     return token === expected;
   }
 
+  // Sends a WhatsApp message back to the user via Green API's sendMessage. Used
+  // to confirm a successful login on the chat the code arrived from. Best-effort:
+  // outbound is skipped (no throw) when credentials are unset, and any transport
+  // error is swallowed so the auth webhook never fails because of the reply.
+  async sendWhatsappReply(
+    chatId: string,
+    message: string = WHATSAPP_LOGIN_REPLY,
+  ): Promise<void> {
+    const idInstance = this.configService.get<string>('greenApi.idInstance');
+    const apiToken = this.configService.get<string>(
+      'greenApi.apiTokenInstance',
+    );
+    const baseUrl =
+      this.configService.get<string>('greenApi.baseUrl') ??
+      'https://api.green-api.com';
+    if (!idInstance || !apiToken) return;
+
+    try {
+      const res = await fetch(
+        `${baseUrl}/waInstance${idInstance}/sendMessage/${apiToken}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ chatId, message }),
+        },
+      );
+      if (!res.ok) {
+        console.warn(
+          `sendWhatsappReply: Green API responded ${res.status}`,
+        );
+      }
+    } catch (e) {
+      console.warn('sendWhatsappReply failed', e);
+    }
+  }
+
   // Used by /v1/auth/tg, /v1/auth/whatsapp — opens a hash-based handshake.
   // (a) Returns the bot identifiers so the client builds deep-links from config
   // instead of hardcoding them. (c) Stamps a short TTL on the hash.
@@ -200,7 +241,7 @@ export class AuthService implements OnModuleInit {
     const expiresAt = new Date(getNowUtcDate().getTime() + ttlMinutes * 60_000);
 
     const data = await this.prismaService.telegramAuthRequest.create({
-      data: { hash: nanoid(32), expiresAt },
+      data: { hash: generateAuthCode(), expiresAt },
     });
     return {
       hash: data.hash,

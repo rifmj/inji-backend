@@ -4,7 +4,8 @@ import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { PrismaService } from '../prisma/prisma.service';
 
-const VALID_HASH = 'a'.repeat(32);
+// A valid 8-char code from the auth-code alphabet (uppercase + digits, no 0/O/1/I).
+const VALID_HASH = 'ABCD2345';
 
 const incomingWebhook = (overrides: Record<string, any> = {}) => ({
   typeWebhook: 'incomingMessageReceived',
@@ -18,6 +19,7 @@ describe('AuthController — WhatsApp (Green API) auth', () => {
 
   const authServiceMock = {
     isValidWhatsappWebhookToken: jest.fn(() => true),
+    sendWhatsappReply: jest.fn(async () => undefined),
     authSocialMessenger: jest.fn(async () => ({ hash: 'h' })),
     authTelegramWithHash: jest.fn(async () => ({ accessToken: 't' })),
   };
@@ -30,6 +32,8 @@ describe('AuthController — WhatsApp (Green API) auth', () => {
   beforeEach(async () => {
     jest.clearAllMocks();
     authServiceMock.isValidWhatsappWebhookToken.mockReturnValue(true);
+    // Default: the code matches a pending request.
+    telegramAuthRequest.updateMany.mockResolvedValue({ count: 1 });
 
     const module: TestingModule = await Test.createTestingModule({
       controllers: [AuthController],
@@ -54,9 +58,10 @@ describe('AuthController — WhatsApp (Green API) auth', () => {
         'Bearer wrong',
       );
       expect(telegramAuthRequest.updateMany).not.toHaveBeenCalled();
+      expect(authServiceMock.sendWhatsappReply).not.toHaveBeenCalled();
     });
 
-    it('captures the phone for the hash when the token is valid', async () => {
+    it('captures the phone for the code and replies when the token is valid', async () => {
       const body = incomingWebhook();
 
       const result = await controller.authWhatsappHook(body, 'Bearer right');
@@ -66,9 +71,30 @@ describe('AuthController — WhatsApp (Green API) auth', () => {
         where: { hash: VALID_HASH },
         data: { phone: '77001234567', data: body },
       });
+      // Confirmation goes back to the sender's chat.
+      expect(authServiceMock.sendWhatsappReply).toHaveBeenCalledWith(
+        '77001234567@c.us',
+      );
     });
 
-    it('reads the hash from extendedTextMessageData as a fallback', async () => {
+    it('extracts the code embedded in a human-readable message', async () => {
+      const body = incomingWebhook({
+        messageData: {
+          textMessageData: {
+            textMessage: `Подтверждаю вход в Inji. Код: ${VALID_HASH}`,
+          },
+        },
+      });
+
+      await controller.authWhatsappHook(body, 'Bearer right');
+
+      expect(telegramAuthRequest.updateMany).toHaveBeenCalledWith({
+        where: { hash: VALID_HASH },
+        data: { phone: '77001234567', data: body },
+      });
+    });
+
+    it('reads the code from extendedTextMessageData as a fallback', async () => {
       const body = incomingWebhook({
         messageData: { extendedTextMessageData: { text: `  ${VALID_HASH}  ` } },
       });
@@ -81,6 +107,19 @@ describe('AuthController — WhatsApp (Green API) auth', () => {
       });
     });
 
+    it('does NOT send a reply when the code matches no pending request', async () => {
+      telegramAuthRequest.updateMany.mockResolvedValue({ count: 0 });
+
+      const result = await controller.authWhatsappHook(
+        incomingWebhook(),
+        'Bearer right',
+      );
+
+      expect(result).toBe(true);
+      expect(telegramAuthRequest.updateMany).toHaveBeenCalled();
+      expect(authServiceMock.sendWhatsappReply).not.toHaveBeenCalled();
+    });
+
     it('ignores non-incomingMessageReceived events', async () => {
       const result = await controller.authWhatsappHook(
         incomingWebhook({ typeWebhook: 'outgoingMessageStatus' }),
@@ -89,9 +128,10 @@ describe('AuthController — WhatsApp (Green API) auth', () => {
 
       expect(result).toBeUndefined();
       expect(telegramAuthRequest.updateMany).not.toHaveBeenCalled();
+      expect(authServiceMock.sendWhatsappReply).not.toHaveBeenCalled();
     });
 
-    it('ignores messages whose text is not a 32-char hash', async () => {
+    it('ignores messages whose text carries no valid code', async () => {
       const result = await controller.authWhatsappHook(
         incomingWebhook({
           messageData: { textMessageData: { textMessage: 'too-short' } },
@@ -101,6 +141,7 @@ describe('AuthController — WhatsApp (Green API) auth', () => {
 
       expect(result).toBeUndefined();
       expect(telegramAuthRequest.updateMany).not.toHaveBeenCalled();
+      expect(authServiceMock.sendWhatsappReply).not.toHaveBeenCalled();
     });
   });
 

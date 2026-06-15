@@ -29,6 +29,7 @@ import { RegisterDto } from './dto/register.dto';
 import { LoginDto } from './dto/login.dto';
 import { LoginResponseDto } from './dto/login-response.dto';
 import { PrismaService } from '../prisma/prisma.service';
+import { AUTH_CODE_RE } from './auth-code';
 
 @ApiTags('auth')
 @Controller({
@@ -200,7 +201,7 @@ export class AuthController {
     @Headers('authorization') authHeader?: string,
   ) {
     // Green API webhooks are unauthenticated by default — without this check any
-    // caller who learns a 32-char hash could inject an arbitrary phone for it and
+    // caller who learns an auth code could inject an arbitrary phone for it and
     // then claim a session via /whatsapp/hash. Require the configured Bearer token.
     if (!this.authService.isValidWhatsappWebhookToken(authHeader)) {
       throw new UnauthorizedException();
@@ -208,19 +209,27 @@ export class AuthController {
 
     if (body.typeWebhook !== 'incomingMessageReceived') return;
 
-    const hash = (
+    // The client sends a human-readable message that embeds the short auth code
+    // (e.g. "Подтверждаю вход в Inji. Код: ABC23456"), so pull the code out by
+    // pattern instead of treating the whole message as the code.
+    const text =
       body?.messageData?.textMessageData?.textMessage ||
       body?.messageData?.extendedTextMessageData?.text ||
-      ''
-    ).trim();
-
-    if (hash.length !== 32) return;
+      '';
+    const hash = text.match(AUTH_CODE_RE)?.[0];
+    if (!hash) return;
 
     const phone = body.senderData.chatId.replace('@c.us', '');
-    await this.prismaService.telegramAuthRequest.updateMany({
+    const res = await this.prismaService.telegramAuthRequest.updateMany({
       where: { hash },
       data: { phone, data: body },
     });
+
+    // Confirm back to the user on WhatsApp, but only when the code actually
+    // matched a pending request. Best-effort — never fail the webhook on it.
+    if (res?.count > 0) {
+      await this.authService.sendWhatsappReply(body.senderData.chatId);
+    }
     return true;
   }
 
