@@ -200,12 +200,21 @@ model DeliveryEstimate {
 }
 
 model KaspiPaymentRequest {
-  id           String   @id
-  createdAt    DateTime @default(now())
+  id           String    @id
+  createdAt    DateTime  @default(now())
   userId       String?
   phone        String?
   checkoutData Json?
   amount       Float?
+  // Outbox fields for the phone-automation worker (kaspi-automation --watch),
+  // which auto-sends the Kaspi invoice. Kaspi has no API and no paid-callback,
+  // so this tracks the SEND only, not payment.
+  orderNumber  String?
+  status       String    @default("pending") // pending | sending | sent | failed | skipped
+  sentAt       DateTime?
+  error        String?
+
+  @@index([status])
 }
 
 model SavedCard {
