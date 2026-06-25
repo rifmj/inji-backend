@@ -120,8 +120,8 @@ export class GeoService {
     const route = [from, to];
     const selectedClass = 'express';
 
-    const expiresAt = getNowUtcDate();
-    expiresAt.setMinutes(expiresAt.getMinutes() + 15);
+    // Reuse an estimate created within the last 15 minutes; older rows are stale.
+    const freshSince = new Date(getNowUtcDate().getTime() - 15 * 60_000);
 
     const estimated = await this.prismaService.deliveryEstimate.findFirst({
       where: {
@@ -129,7 +129,7 @@ export class GeoService {
           equals: route,
         },
         createdAt: {
-          gte: expiresAt,
+          gte: freshSince,
         },
         phone,
       },
