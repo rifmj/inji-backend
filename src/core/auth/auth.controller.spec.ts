@@ -69,7 +69,7 @@ describe('AuthController — WhatsApp (Green API) auth', () => {
       expect(result).toBe(true);
       expect(telegramAuthRequest.updateMany).toHaveBeenCalledWith({
         where: { hash: VALID_HASH },
-        data: { phone: '77001234567', data: body },
+        data: { phone: '7001234567', data: body },
       });
       // Confirmation goes back to the sender's chat.
       expect(authServiceMock.sendWhatsappReply).toHaveBeenCalledWith(
@@ -90,7 +90,7 @@ describe('AuthController — WhatsApp (Green API) auth', () => {
 
       expect(telegramAuthRequest.updateMany).toHaveBeenCalledWith({
         where: { hash: VALID_HASH },
-        data: { phone: '77001234567', data: body },
+        data: { phone: '7001234567', data: body },
       });
     });
 
@@ -103,7 +103,7 @@ describe('AuthController — WhatsApp (Green API) auth', () => {
 
       expect(telegramAuthRequest.updateMany).toHaveBeenCalledWith({
         where: { hash: VALID_HASH },
-        data: { phone: '77001234567', data: body },
+        data: { phone: '7001234567', data: body },
       });
     });
 
@@ -123,6 +123,17 @@ describe('AuthController — WhatsApp (Green API) auth', () => {
     it('ignores non-incomingMessageReceived events', async () => {
       const result = await controller.authWhatsappHook(
         incomingWebhook({ typeWebhook: 'outgoingMessageStatus' }),
+        'Bearer right',
+      );
+
+      expect(result).toBeUndefined();
+      expect(telegramAuthRequest.updateMany).not.toHaveBeenCalled();
+      expect(authServiceMock.sendWhatsappReply).not.toHaveBeenCalled();
+    });
+
+    it('ignores non-direct chats (LID / group / broadcast) — no phone written', async () => {
+      const result = await controller.authWhatsappHook(
+        incomingWebhook({ senderData: { chatId: '123456789012345@lid' } }),
         'Bearer right',
       );
 

@@ -14,6 +14,7 @@ import { ConfigService } from '@nestjs/config';
 import { assertParamExists } from '../utils/assert';
 
 import { getNowUtcDate } from '../utils/date';
+import { normalizePhone } from '../utils/phone';
 import { SmsService } from '../../app/messaging/sms/sms.service';
 import { IdentityService } from './identity.service';
 import { SaleorAuthService } from './saleor-auth.service';
@@ -161,7 +162,10 @@ export class AuthService implements OnModuleInit {
       LogCtx.Auth,
     );
 
-    const existing = await this.findUserByPhoneIdentity(body.phone);
+    const phone = normalizePhone(body.phone);
+    if (!phone) throw new UnauthorizedException('Неверный номер телефона');
+
+    const existing = await this.findUserByPhoneIdentity(phone);
     if (existing?.isDeleted) {
       throw new NotAcceptableException('Аккаунт был удален');
     }
@@ -175,8 +179,8 @@ export class AuthService implements OnModuleInit {
 
     const user = await this.identityService.resolveUserByIdentity(
       'phone',
-      body.phone,
-      { phone: body.phone },
+      phone,
+      { phone },
     );
     return this.identityService.issueSession(user);
   }
@@ -223,9 +227,7 @@ export class AuthService implements OnModuleInit {
         },
       );
       if (!res.ok) {
-        console.warn(
-          `sendWhatsappReply: Green API responded ${res.status}`,
-        );
+        console.warn(`sendWhatsappReply: Green API responded ${res.status}`);
       }
     } catch (e) {
       console.warn('sendWhatsappReply failed', e);
@@ -264,12 +266,17 @@ export class AuthService implements OnModuleInit {
     });
     if (!data || data.hash !== hash) throw new UnauthorizedException();
     if (data.usedAt) return null; // already consumed
-    if (data.expiresAt && data.expiresAt.getTime() < getNowUtcDate().getTime()) {
+    if (
+      data.expiresAt &&
+      data.expiresAt.getTime() < getNowUtcDate().getTime()
+    ) {
       return null; // expired
     }
     if (!data.phone) return null; // bot has not written the phone yet
 
-    const phone = data.phone.slice(-10);
+    // Canonical 10-digit subject so the same person always maps to the same
+    // identity (and we never mint a duplicate from a malformed phone / LID).
+    const phone = normalizePhone(data.phone);
     if (!phone) return null;
 
     // Atomically claim the hash so a session can be issued only once, even if
@@ -295,7 +302,7 @@ export class AuthService implements OnModuleInit {
     if (!data?.phone || !data.isConfirmed) {
       throw new UnauthorizedException();
     }
-    const userPhone = data.userPhone?.slice(-10);
+    const userPhone = normalizePhone(data.userPhone);
     if (!userPhone) return;
 
     const user = await this.identityService.resolveUserByIdentity(
@@ -322,6 +329,23 @@ export class AuthService implements OnModuleInit {
   }
 
   // ---------- account ----------
+
+  // Lightweight profile for the authenticated user. The phone is returned in
+  // canonical 10-digit national form so the client can render it directly
+  // (e.g. "+7" + phone) instead of trying to recover it from the synthetic
+  // Saleor email — which no longer encodes the phone.
+  async getProfile(userId: string) {
+    const user = await this.prismaService.user.findUnique({
+      where: { id: userId },
+    });
+    if (!user) throw new UnauthorizedException();
+    return {
+      id: user.id,
+      phone: normalizePhone(user.phone),
+      name: user.name,
+      email: user.email,
+    };
+  }
 
   // Soft-delete the user, revoke all sessions, revoke Apple grants, and
   // delete the Saleor customer. Best-effort on external systems — local

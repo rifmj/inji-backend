@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Delete,
+  Get,
   Headers,
   Post,
   Req,
@@ -30,6 +31,7 @@ import { LoginDto } from './dto/login.dto';
 import { LoginResponseDto } from './dto/login-response.dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { AUTH_CODE_RE } from './auth-code';
+import { phoneFromWhatsappChatId } from '../utils/phone';
 
 @ApiTags('auth')
 @Controller({
@@ -158,6 +160,14 @@ export class AuthController {
     return { ok: true };
   }
 
+  @UseGuards(AuthGuard)
+  @ApiBasicAuth('JWT')
+  @ApiOperation({ summary: 'Профиль текущего пользователя' })
+  @Get('me')
+  async me(@User('id') userId: string) {
+    return this.authService.getProfile(userId);
+  }
+
   // ---------- Apple Sign-In ----------
 
   @ApiOperation({ summary: 'Issue a one-shot nonce for Sign in with Apple' })
@@ -167,7 +177,8 @@ export class AuthController {
   }
 
   @ApiOperation({
-    summary: 'Complete Sign in with Apple — verify identityToken & sign user in',
+    summary:
+      'Complete Sign in with Apple — verify identityToken & sign user in',
   })
   @ApiResponse({ status: 201, type: LoginResponseDto })
   @Post('apple')
@@ -219,7 +230,12 @@ export class AuthController {
     const hash = text.match(AUTH_CODE_RE)?.[0];
     if (!hash) return;
 
-    const phone = body.senderData.chatId.replace('@c.us', '');
+    // Only direct user chats ("<phone>@c.us") carry a real phone. Group/LID/
+    // broadcast chatIds have none — writing their raw id as the phone produced
+    // a junk identity subject and a fresh duplicate user on every login.
+    const phone = phoneFromWhatsappChatId(body?.senderData?.chatId);
+    if (!phone) return;
+
     const res = await this.prismaService.telegramAuthRequest.updateMany({
       where: { hash },
       data: { phone, data: body },
