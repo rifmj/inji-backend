@@ -1,6 +1,14 @@
-import { Body, Controller, HttpCode, Post, Req } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  HttpCode,
+  Post,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import { HooksService } from './hooks.service';
 import { PaymentHooksService } from './payment-hooks.service';
+import { TipTopPaySignatureGuard } from './guards/tiptoppay-signature.guard';
 import { Request } from 'express';
 import { AddressCreatedHook } from './types/AddressCreatedHook';
 import { SaleorOrderUpdatedHook } from './types/SaleorOrderUpdatedHook';
@@ -78,33 +86,44 @@ export class HooksController {
 
   /**
    * Payments
+   *
+   * Every TipTopPay notification is HMAC-signed; TipTopPaySignatureGuard rejects
+   * any request whose signature does not match the terminal API secret. Without
+   * it these endpoints would let anyone forge a paid callback (e.g. /payments/pay
+   * creates a real Saleor order from a checkout id).
    */
   @Post('payments/check')
+  @UseGuards(TipTopPaySignatureGuard)
   checkPayment(@Req() req: Request, @Body() body: any) {
     return this.paymentHooksService.checkPayment(body);
   }
 
   @Post('payments/pay')
+  @UseGuards(TipTopPaySignatureGuard)
   payPayment(@Req() req: Request, @Body() body: any) {
     return this.paymentHooksService.payPayment(body);
   }
 
   @Post('payments/fail')
+  @UseGuards(TipTopPaySignatureGuard)
   failPayment(@Req() req: Request, @Body() body: any) {
     return this.paymentHooksService.failPayment(body);
   }
 
   @Post('payments/cancel')
+  @UseGuards(TipTopPaySignatureGuard)
   cancelPayment(@Req() req: Request, @Body() body: any) {
     return this.paymentHooksService.cancelPayment(body);
   }
 
   @Post('payments/confirm')
+  @UseGuards(TipTopPaySignatureGuard)
   confirmPayment(@Req() req: Request, @Body() body: any) {
     return this.paymentHooksService.confirmPayment(body);
   }
 
   @Post('payments/refund')
+  @UseGuards(TipTopPaySignatureGuard)
   refundPayment(@Req() req: Request, @Body() body: any) {
     return this.paymentHooksService.refundPayment(body);
   }

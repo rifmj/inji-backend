@@ -2,7 +2,6 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { LoggerService } from '../../core/shared/logger.service';
 import { TelegramService } from '../messaging/telegram/telegram.service';
-import { HttpService } from '@nestjs/axios';
 import { GraphQLClient } from 'graphql-request';
 import { PushService } from '../messaging/push/push.service';
 import {
@@ -11,14 +10,8 @@ import {
   OrderLine,
   OrderAddress,
   OrderFulfilledHook,
-  OrderTransactionsResponse,
-  TipTopPayResponse,
   OrderFulfillmentLine,
 } from './types/OrderHooks';
-import {
-  GET_ORDER_TRANSACTIONS_QUERY,
-  TRANSACTION_UPDATE_MUTATION,
-} from './graphql/mutations';
 
 @Injectable()
 export class OrderHooksService {
@@ -27,7 +20,6 @@ export class OrderHooksService {
   constructor(
     private readonly loggerService: LoggerService,
     private readonly telegramService: TelegramService,
-    private readonly httpService: HttpService,
     private readonly pushService: PushService,
     private readonly configService: ConfigService,
   ) {}
@@ -115,85 +107,6 @@ export class OrderHooksService {
     return null;
   }
 
-  private async handleOrderTransactions(orderId: string): Promise<{
-    txId: string | null;
-    reference: number | null;
-    amount: number | null;
-  }> {
-    let orderTransactions: OrderTransactionsResponse | null = null;
-
-    try {
-      orderTransactions = await this.client.request<OrderTransactionsResponse>(
-        GET_ORDER_TRANSACTIONS_QUERY,
-        { id: orderId },
-      );
-    } catch (e) {
-      this.loggerService.error(e, 'Failed to fetch order transactions');
-      return { txId: null, reference: null, amount: null };
-    }
-
-    if (orderTransactions?.order?.transactions?.length > 1) {
-      return { txId: null, reference: null, amount: null };
-    }
-
-    const transaction = orderTransactions?.order?.transactions?.[0];
-    if (!transaction) {
-      return { txId: null, reference: null, amount: null };
-    }
-
-    return {
-      txId: transaction.id,
-      reference: parseInt(transaction.reference),
-      amount: parseFloat(transaction.authorizedAmount.amount),
-    };
-  }
-
-  private async confirmPaymentWithTipTopPay(
-    reference: number,
-    amount: number,
-  ): Promise<TipTopPayResponse | null> {
-    try {
-      return await this.httpService
-        .post<TipTopPayResponse>(
-          'https://api.tiptoppay.kz/payments/confirm',
-          {
-            TransactionId: reference,
-            Amount: amount,
-          },
-          {
-            auth: {
-              username: 'pk_fd7484ae803dd00e66a1a919f3b86',
-              password: '845091bf6d206d2a31fddb1d5c71561f',
-            },
-          },
-        )
-        .toPromise();
-    } catch (e) {
-      this.loggerService.error(e, 'Failed to confirm payment with TipTopPay');
-      return null;
-    }
-  }
-
-  private async updateTransactionStatus(
-    txId: string,
-    reference: number,
-    amount: number,
-  ): Promise<void> {
-    try {
-      const transactionUpdate = await this.client.request(
-        TRANSACTION_UPDATE_MUTATION,
-        { id: txId, reference, amount },
-      );
-
-      this.loggerService.info({ transactionUpdate }, 'saleor-order-fulfilled');
-    } catch (e) {
-      this.loggerService.error(
-        { error: e, status: 'transactionUpdateError' },
-        'saleor-order-fulfilled',
-      );
-    }
-  }
-
   private async sendPushNotification(userId: string): Promise<void> {
     try {
       await this.pushService.sendToUser(userId, {
@@ -212,7 +125,6 @@ export class OrderHooksService {
 
   private async sendTelegramNotification(
     orderId: string,
-    amount: number,
     fulfillmentsLines: OrderFulfillmentLine[],
   ): Promise<void> {
     try {
@@ -220,7 +132,7 @@ export class OrderHooksService {
         .map((line) => [line.product_name, line.quantity].join(' - '))
         .join('\n');
       await this.telegramService.sendMessage(
-        `Заказ собран: ${orderId} на сумму ${amount}}. Товары: ${lines}`,
+        `Заказ собран: ${orderId}. Товары: ${lines}`,
       );
     } catch (e) {
       this.loggerService.error(
@@ -230,34 +142,21 @@ export class OrderHooksService {
     }
   }
 
+  // Payment is recorded in Saleor at pay time (PaymentHooksService.payPayment
+  // creates a Charged transaction), so fulfillment only notifies the customer
+  // and the ops channel. The old TipTopPay two-stage confirm here was dead code:
+  // card orders never carried a Saleor transaction to confirm.
   async handleOrderFulfilled(body: OrderFulfilledHook[]): Promise<null> {
     const order = body[0];
     const orderId = order.id;
 
-    // Handle order transactions
-    const { txId, reference, amount } = await this.handleOrderTransactions(orderId);
-    if (!txId || !reference || !amount) {
-      return null;
-    }
-
-    // Confirm payment with TipTopPay
-    const createTxResult = await this.confirmPaymentWithTipTopPay(reference, amount);
-
-    // Update transaction status
-    await this.updateTransactionStatus(txId, reference, amount);
-
-    // Send notifications
     await this.sendPushNotification(order.meta.issuing_principal.id);
     await this.sendTelegramNotification(
       orderId,
-      amount,
-      order.fulfillments[0].lines || [],
+      order.fulfillments[0]?.lines || [],
     );
 
-    this.loggerService.info(
-      { ...body, createTxResult: createTxResult?.data },
-      'saleor-order-fulfilled',
-    );
+    this.loggerService.info({ ...body }, 'saleor-order-fulfilled');
     return null;
   }
 } 

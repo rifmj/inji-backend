@@ -3,6 +3,7 @@ import { HooksService } from './hooks.service';
 import { OrderHooksService } from './order-hooks.service';
 import { PaymentHooksService } from './payment-hooks.service';
 import { HooksController } from './hooks.controller';
+import { TipTopPaySignatureGuard } from './guards/tiptoppay-signature.guard';
 import { TelegramModule } from '../messaging/telegram/telegram.module';
 import { LoggerService } from '../../core/shared/logger.service';
 import { HttpModule } from '@nestjs/axios';
@@ -24,6 +25,7 @@ import { GeoModule } from '../geo/geo.module';
     HooksService,
     OrderHooksService,
     PaymentHooksService,
+    TipTopPaySignatureGuard,
     LoggerService,
   ],
   controllers: [HooksController],

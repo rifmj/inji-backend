@@ -17,58 +17,22 @@ export const ORDER_CREATE_MUTATION = gql`
   }
 `;
 
-export const GET_ORDER_TRANSACTIONS_QUERY = gql`
-  query getOrder($id: ID!) {
-    orders {
-      edges {
-        node {
-          id
-          subtotal {
-            net {
-              amount
-            }
-          }
-          lines {
-            productName
-            quantity
-          }
-          shippingAddress {
-            streetAddress1
-            streetAddress2
-          }
-          total {
-            net {
-              amount
-            }
-          }
-        }
-      }
-    }
-    order(id: $id) {
-      id
-      transactions {
-        id
-        reference
-        authorizedAmount {
-          amount
-        }
-      }
-    }
-  }
-`;
-
-export const TRANSACTION_UPDATE_MUTATION = gql`
-  mutation TransactionUpdate(
+// Records a successful card payment on the freshly created order so Saleor
+// reflects it as paid. $id is the ORDER id, $reference is the TipTopPay
+// TransactionId, $amount is the charged amount (KZT).
+export const TRANSACTION_CREATE_MUTATION = gql`
+  mutation TransactionCreate(
     $id: ID!
     $reference: String!
     $amount: PositiveDecimal!
   ) {
-    transactionUpdate(
+    transactionCreate(
       id: $id
       transaction: {
+        type: "Оплата картой (TipTopPay)"
         status: "Charged"
+        reference: $reference
         availableActions: [REFUND]
-        amountAuthorized: { currency: "KZT", amount: 0 }
         amountCharged: { currency: "KZT", amount: $amount }
       }
       transactionEvent: {

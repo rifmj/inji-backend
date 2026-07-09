@@ -2,8 +2,17 @@ import { Injectable } from '@nestjs/common';
 import { LoggerService } from '../../core/shared/logger.service';
 import { GraphQLClient } from 'graphql-request';
 import { PrismaService } from '../../core/prisma/prisma.service';
-import { GET_CHECKOUT_QUERY, ORDER_CREATE_MUTATION } from './graphql/mutations';
+import {
+  GET_CHECKOUT_QUERY,
+  ORDER_CREATE_MUTATION,
+  TRANSACTION_CREATE_MUTATION,
+} from './graphql/mutations';
 import { SaleorService } from '../saleor/saleor.service';
+
+/** Prisma raises P2002 when a unique constraint (here idempotencyKey) is hit. */
+function isUniqueConstraintError(error: unknown): boolean {
+  return (error as { code?: string })?.code === 'P2002';
+}
 
 @Injectable()
 export class PaymentHooksService {
@@ -45,7 +54,62 @@ export class PaymentHooksService {
   }): Promise<boolean> {
     this.loggerService.info(body, 'cloudpayments-pay');
 
+    // Idempotency: TipTopPay retries this callback (timeouts, network hiccups).
+    // Claim the payment BEFORE any side effect so a duplicate or concurrent
+    // delivery is skipped instead of creating a second order / saved card. Key
+    // on the gateway TransactionId; fall back to InvoiceId if it is absent.
+    const idempotencyKey = body.TransactionId || body.InvoiceId;
+    if (idempotencyKey) {
+      try {
+        await this.prismaService.paymentWebhookEvent.create({
+          data: { provider: 'tiptoppay', idempotencyKey },
+        });
+      } catch (error) {
+        if (isUniqueConstraintError(error)) {
+          this.loggerService.info(
+            { idempotencyKey, InvoiceId: body.InvoiceId },
+            'cloudpayments-pay-duplicate',
+          );
+          return true;
+        }
+        throw error;
+      }
+    } else {
+      // No stable key to dedupe on — process, but flag it: retries here could
+      // still double up.
+      this.loggerService.error(
+        { body, status: 'missingIdempotencyKey' },
+        'cloudpayments-pay',
+      );
+    }
+
     try {
+      // Create the order FIRST, then persist the card only once the order
+      // succeeds — a failed attempt must not leave an orphan saved card.
+      const createdOrder = await this.client.request(ORDER_CREATE_MUTATION, {
+        id: body.InvoiceId,
+      });
+
+      this.loggerService.info(
+        { createdOrder, InvoiceId: body.InvoiceId },
+        'Order created from checkout',
+      );
+
+      const createdOrderId = createdOrder.orderCreateFromCheckout?.order?.id;
+      if (!createdOrderId) {
+        throw new Error('Failed to create order: No order ID returned');
+      }
+
+      // Record the payment on the order so Saleor shows it as paid. Best-effort:
+      // the money is already captured and the order exists, so a failure here is
+      // a reconciliation issue to log, not a reason to fail (and retry) the whole
+      // callback.
+      await this.recordSaleorPayment(
+        createdOrderId,
+        body.PaymentAmount,
+        body.TransactionId,
+      );
+
       // AccountId is the Saleor account email we provisioned for the user.
       // Resolve it back to the local User via the stable saleorEmail handle.
       const user = await this.prismaService.user.findUnique({
@@ -62,21 +126,8 @@ export class PaymentHooksService {
         });
       }
 
-      const createdOrder = await this.client.request(ORDER_CREATE_MUTATION, {
-        id: body.InvoiceId,
-      });
-
-      this.loggerService.info(
-        { createdOrder, InvoiceId: body.InvoiceId },
-        'Order created from checkout',
-      );
-
-      const createdOrderId = createdOrder.orderCreateFromCheckout?.order?.id;
-      if (!createdOrderId) {
-        throw new Error('Failed to create order: No order ID returned');
-      }
-
       await this.updateInvoiceStatus(body.InvoiceId, 1);
+      await this.markWebhookProcessed(idempotencyKey);
       return true;
     } catch (error) {
       this.loggerService.error(
@@ -90,6 +141,9 @@ export class PaymentHooksService {
         'Failed to process payment',
       );
 
+      // Release the idempotency claim so a genuine gateway retry can re-run.
+      await this.releaseWebhookClaim(idempotencyKey);
+
       try {
         await this.updateInvoiceStatus(body.InvoiceId, -1);
       } catch (updateError) {
@@ -100,6 +154,77 @@ export class PaymentHooksService {
       }
 
       return false;
+    }
+  }
+
+  /**
+   * Create a Charged transaction on the order so Saleor reflects the card
+   * payment (previously card orders carried no transaction and looked unpaid).
+   * Best-effort — logs on failure but does not throw.
+   */
+  private async recordSaleorPayment(
+    orderId: string,
+    paymentAmount: string,
+    transactionId: string,
+  ): Promise<void> {
+    const amount = parseFloat(paymentAmount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      this.loggerService.error(
+        { orderId, paymentAmount, status: 'invalidPaymentAmount' },
+        'Failed to record Saleor payment',
+      );
+      return;
+    }
+
+    try {
+      const result = await this.client.request(TRANSACTION_CREATE_MUTATION, {
+        id: orderId,
+        reference: transactionId,
+        amount,
+      });
+      this.loggerService.info(
+        { orderId, transactionId, result },
+        'Saleor payment recorded',
+      );
+    } catch (error) {
+      this.loggerService.error(
+        { error, orderId, transactionId },
+        'Failed to record Saleor payment',
+      );
+    }
+  }
+
+  /** Mark a claimed webhook as fully processed (best-effort). */
+  private async markWebhookProcessed(idempotencyKey?: string): Promise<void> {
+    if (!idempotencyKey) return;
+    try {
+      await this.prismaService.paymentWebhookEvent.update({
+        where: { idempotencyKey },
+        data: { status: 'processed' },
+      });
+    } catch (error) {
+      this.loggerService.error(
+        { error, idempotencyKey },
+        'Failed to mark payment webhook processed',
+      );
+    }
+  }
+
+  /**
+   * Drop the idempotency claim after a failed attempt so a later gateway retry
+   * is allowed to re-run instead of being skipped as a duplicate (best-effort).
+   */
+  private async releaseWebhookClaim(idempotencyKey?: string): Promise<void> {
+    if (!idempotencyKey) return;
+    try {
+      await this.prismaService.paymentWebhookEvent.deleteMany({
+        where: { idempotencyKey },
+      });
+    } catch (error) {
+      this.loggerService.error(
+        { error, idempotencyKey },
+        'Failed to release payment webhook claim',
+      );
     }
   }
 

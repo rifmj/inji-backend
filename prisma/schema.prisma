@@ -226,3 +226,21 @@ model SavedCard {
 
   @@index([userId])
 }
+
+// Idempotency guard for TipTopPay payment webhooks. The gateway retries the
+// /hooks/payments/pay callback (network hiccups, timeouts), and without this a
+// retry would create a second Saleor order / duplicate saved card. We insert a
+// row keyed on the gateway idempotencyKey BEFORE doing any work; a duplicate
+// callback hits the unique constraint and is skipped. status flips to
+// 'processed' on success; a failed attempt deletes the row so a genuine retry
+// can re-run.
+model PaymentWebhookEvent {
+  id             String   @id @default(cuid())
+  createdAt      DateTime @default(now())
+  provider       String // e.g. "tiptoppay"
+  // Gateway idempotency key — TipTopPay TransactionId (falls back to InvoiceId).
+  idempotencyKey String   @unique
+  status         String   @default("processing") // processing | processed
+
+  @@index([idempotencyKey])
+}

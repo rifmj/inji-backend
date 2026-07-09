@@ -39,6 +39,8 @@ export default () => {
     APPLE_KEY_ID,
     APPLE_PRIVATE_KEY,
     APPLE_NONCE_TTL_SECONDS,
+    TIPTOP_PUBLIC_ID,
+    TIPTOP_API_SECRET,
   } = process.env;
 
   const appleKeyConfigured = !!(
@@ -124,6 +126,17 @@ export default () => {
     secrets: {
       // 32-byte key (64 hex chars) for AES-256-GCM. Required.
       encryptionKey: SECRETS_ENCRYPTION_KEY,
+    },
+    payments: {
+      // TipTopPay (CloudPayments white-label for KZ) terminal credentials.
+      // publicId is the "pk_..." Public ID (safe to expose on the client too);
+      // apiSecret is the terminal API Secret — used BOTH as the Basic-auth
+      // password when confirming payments AND as the HMAC key to verify the
+      // signature on incoming payment webhooks. Never commit it to source.
+      tiptop: {
+        publicId: TIPTOP_PUBLIC_ID,
+        apiSecret: TIPTOP_API_SECRET,
+      },
     },
     apple: {
       bundleId: APPLE_BUNDLE_ID,
