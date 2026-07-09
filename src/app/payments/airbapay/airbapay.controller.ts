@@ -2,7 +2,6 @@ import {
   Body,
   Controller,
   Get,
-  Headers,
   Logger,
   Param,
   Post,
@@ -69,80 +68,6 @@ export class AirbapayController {
   @Get('/')
   async getPayments(): Promise<Payment[]> {
     return this.paymentService.findAll();
-  }
-
-  @Post('authenticate')
-  async authenticate(@Body() body: { username: string; password: string }) {
-    const token = await this.airbapayService.authenticate(
-      body.username,
-      body.password,
-    );
-    return { token };
-  }
-
-  @Post('update-merchant-order-state')
-  async updateMerchantOrderState(
-    @Body() body: any,
-    @Headers('Authorization') authHeader: string,
-  ) {
-    console.info('update-merchant-order-state', body, authHeader);
-    const result = await this.airbapayService.updateMerchantOrderState(
-      body,
-      authHeader,
-    );
-    // // ВАЖНО: Мы ищем заказ в Saleor по его `number`, не по ID,
-    // // так как AirbaPay возвращает `orderId`, который мы задали как `order.number`.
-    // // Для более надежной связи лучше было бы найти заказ по метаполю airbaPayOrderId.
-    //
-    // // В данном примере будем считать, что orderId - это ID заказа в Saleor,
-    // // который мы сохранили в метаданных. Но в DTO от AirbaPay это поле `orderId`.
-    // // Здесь нужна четкая стратегия, что является связующим звеном.
-    // // Предположим, что `orderId` из коллбэка - это `order.number` из Saleor.
-    // // Для надежности нужно было бы реализовать поиск по метаполю.
-    //
-    // // --- ЗДЕСЬ ВАША БИЗНЕС-ЛОГИКА ---
-    // // Для примера, логика будет упрощенной.
-    // // В реальном проекте нужен поиск по метаполю.
-    //
-    // try {
-    //   // Логика должна быть сложнее: найти заказ по orderId, который мы передали.
-    //   // Здесь мы не знаем ID заказа Saleor, только его номер.
-    //   // Для демонстрации пропустим этот шаг и представим, что ID известен.
-    //   // const saleorOrder = await this.findSaleorOrderByNumber(saleorOrderNumber);
-    //   const saleorOrderId = "gid://Order/xyz"; // ЗАГЛУШКА: ID нужно получить из БД или по доп. запросу.
-    //
-    //   switch (state) {
-    //     case 'confirmed':
-    //     case 'completed':
-    //       this.logger.log(`Статус 'confirmed'/'completed'. Создание платежа для заказа ${saleorOrderId}.`);
-    //       // Получаем детали заказа, чтобы узнать сумму
-    //       const { order } = await this.saleorService.getOrderDetails(saleorOrderId);
-    //       await this.saleorService.createPaymentTransaction(
-    //         saleorOrderId,
-    //         order.total.gross.amount,
-    //         statusUpdate.orderId // Используем ID заказа Airba как референс
-    //       );
-    //       break;
-    //
-    //     case 'rejected':
-    //     case 'customer_cancelled':
-    //     case 'merchant_cancelled':
-    //       this.logger.log(`Статус 'rejected'/'cancelled'. Отмена заказа ${saleorOrderId}.`);
-    //       await this.saleorService.cancelOrder(saleorOrderId);
-    //       break;
-    //
-    //     case 'refunded':
-    //       this.logger.log(`Статус 'refunded'. Требуется ручная обработка возврата для ${saleorOrderId}.`);
-    //       // Логика возврата: создание refund в Saleor
-    //       break;
-    //
-    //     default:
-    //       this.logger.log(`Получен необрабатываемый статус '${state}' для заказа ${saleorOrderNumber}`);
-    //   }
-    // } catch (error) {
-    //   this.logger.error(`Ошибка при обработке статуса для заказа ${saleorOrderNumber}:`, error);
-    // }
-    return result;
   }
 
   @Get('payment-success')

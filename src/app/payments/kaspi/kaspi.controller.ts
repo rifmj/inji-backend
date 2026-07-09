@@ -1,12 +1,25 @@
-import { Body, Controller, Get, Param, Post, UseGuards } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Get,
+  Param,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import { PrismaService } from '../../../core/prisma/prisma.service';
 import { WorkerGuard } from '../../../core/auth/WorkerGuard';
+import { AuthGuard } from '../../../core/auth/AuthGuard';
+import { User } from '../../../core/auth/user.decorator';
 
 import { nanoid } from 'nanoid';
 
 interface KaspiCreatePaymentRequestDto {
-  userId: string;
+  // userId is intentionally NOT taken from the body — it is derived from the
+  // authenticated session so a caller can't attribute a request to another user.
   phone: string;
+  // Full Saleor checkout blob (used to build the invoice; carries the checkout
+  // id used for idempotency). Typed `any` to match Prisma's Json input.
   checkoutData: any;
   amount: number;
   orderNumber?: string;
@@ -22,21 +35,62 @@ export class KaspiController {
   constructor(private prismaService: PrismaService) {}
 
   @Post('create-payment-request')
+  @UseGuards(AuthGuard)
   async createPaymentRequest(
+    @User('id') userId: string,
     @Body()
     body: KaspiCreatePaymentRequestDto,
   ) {
-    const request = await this.prismaService.kaspiPaymentRequest.create({
+    // Validate server-side — the body reaches us straight from the client.
+    if (!body.phone) {
+      throw new BadRequestException('phone is required');
+    }
+    if (!Number.isFinite(body.amount) || body.amount <= 0) {
+      throw new BadRequestException('amount must be a positive number');
+    }
+
+    // Idempotency: one Kaspi invoice per checkout. Guards against client retries
+    // (axios-retry re-sends POSTs on network errors) creating duplicate invoices.
+    const checkoutId = body.checkoutData?.id;
+    if (checkoutId) {
+      const idempotencyKey = `kaspi:${checkoutId}`;
+      try {
+        await this.prismaService.paymentWebhookEvent.create({
+          data: { provider: 'kaspi', idempotencyKey },
+        });
+      } catch (e) {
+        if ((e as { code?: string })?.code === 'P2002') {
+          // Already requested for this checkout — don't send a second invoice.
+          return { ok: true, duplicate: true };
+        }
+        throw e;
+      }
+
+      try {
+        return await this.createRequestRow(userId, body);
+      } catch (e) {
+        // Release the claim so a genuine retry can re-create the row.
+        await this.prismaService.paymentWebhookEvent.deleteMany({
+          where: { idempotencyKey },
+        });
+        throw e;
+      }
+    }
+
+    return this.createRequestRow(userId, body);
+  }
+
+  private createRequestRow(userId: string, body: KaspiCreatePaymentRequestDto) {
+    return this.prismaService.kaspiPaymentRequest.create({
       data: {
         id: nanoid(32),
-        userId: body.userId,
+        userId,
         amount: body.amount,
         checkoutData: body.checkoutData,
         phone: body.phone,
         orderNumber: body.orderNumber ?? null,
       },
     });
-    return request;
   }
 
   /**
