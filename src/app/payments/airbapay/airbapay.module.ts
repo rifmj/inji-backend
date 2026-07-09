@@ -7,9 +7,11 @@ import { AirbaService } from './airba.service';
 import { ConfigModule } from '@nestjs/config';
 import { SaleorModule } from '../../saleor/saleor.module';
 import { AirbaPayCallbackGuard } from './guards/airbapay-callback.guard';
+import { PrismaModule } from '../../../core/prisma/prisma.module';
+import { AuthModule } from '../../../core/auth/auth.module';
 
 @Module({
-  imports: [HttpModule, ConfigModule, SaleorModule],
+  imports: [HttpModule, ConfigModule, SaleorModule, PrismaModule, AuthModule],
   providers: [
     AirbapayService,
     AirbaService,

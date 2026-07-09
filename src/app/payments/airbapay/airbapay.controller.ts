@@ -11,6 +11,8 @@ import {
 } from '@nestjs/common';
 import { AirbapayService } from './airbapay.service';
 import { AirbaPayCallbackGuard } from './guards/airbapay-callback.guard';
+import { AuthGuard } from '../../../core/auth/AuthGuard';
+import { PrismaService } from '../../../core/prisma/prisma.service';
 import {
   CancelPaymentDto,
   ConfirmPaymentDto,
@@ -30,6 +32,7 @@ export class AirbapayController {
     private airbapayService: AirbapayService,
     private paymentService: PaymentService,
     private saleorService: SaleorService,
+    private prisma: PrismaService,
   ) {}
 
   @Get('payment-partners')
@@ -38,6 +41,7 @@ export class AirbapayController {
   }
 
   @Post('create-pre-order')
+  @UseGuards(AuthGuard)
   public async createPreOrder(@Body() body: any) {
     return this.airbapayService.preCreateOrder(body);
   }
@@ -180,20 +184,51 @@ export class AirbapayController {
     switch (state) {
       case 'confirmed':
       case 'completed': {
-        // Orders are created lazily on success. Create it, then mark it paid so
-        // Saleor reflects the AirbaPay settlement (previously it stayed unpaid).
-        const orderId = await this.saleorService.createOrderFromCheckout(
-          checkoutId,
-        );
-        const { orderMarkAsPaid } = await this.saleorService.markOrderAsPaid(
-          orderId,
-        );
-        if (orderMarkAsPaid?.errors?.length) {
-          this.logger.error(
-            `Failed to mark order ${orderId} as paid: ${JSON.stringify(
-              orderMarkAsPaid.errors,
-            )}`,
+        // Idempotency: AirbaPay retries callbacks. Claim this checkout before
+        // any side effect so a duplicate/concurrent confirmed callback is
+        // skipped instead of throwing on the already-consumed checkout.
+        const idempotencyKey = `airbapay:${checkoutId}`;
+        try {
+          await this.prisma.paymentWebhookEvent.create({
+            data: { provider: 'airbapay', idempotencyKey },
+          });
+        } catch (e) {
+          if ((e as { code?: string })?.code === 'P2002') {
+            this.logger.log(
+              `Duplicate AirbaPay confirmed callback for checkout ${checkoutId}, skipping`,
+            );
+            break;
+          }
+          throw e;
+        }
+
+        try {
+          // Orders are created lazily on success. Create it, then mark it paid
+          // so Saleor reflects the AirbaPay settlement (it previously stayed
+          // unpaid).
+          const orderId = await this.saleorService.createOrderFromCheckout(
+            checkoutId,
           );
+          const { orderMarkAsPaid } = await this.saleorService.markOrderAsPaid(
+            orderId,
+          );
+          if (orderMarkAsPaid?.errors?.length) {
+            this.logger.error(
+              `Failed to mark order ${orderId} as paid: ${JSON.stringify(
+                orderMarkAsPaid.errors,
+              )}`,
+            );
+          }
+          await this.prisma.paymentWebhookEvent.update({
+            where: { idempotencyKey },
+            data: { status: 'processed' },
+          });
+        } catch (err) {
+          // Release the claim so a genuine AirbaPay retry can re-run.
+          await this.prisma.paymentWebhookEvent.deleteMany({
+            where: { idempotencyKey },
+          });
+          throw err;
         }
         break;
       }
