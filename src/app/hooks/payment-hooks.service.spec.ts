@@ -23,12 +23,14 @@ function makeService() {
   };
   const logger = { info: jest.fn(), error: jest.fn() };
   const saleor = { client: { request } };
+  const telegram = { sendMessage: jest.fn().mockResolvedValue(undefined) };
   const service = new PaymentHooksService(
     logger as any,
     prisma as any,
     saleor as any,
+    telegram as any,
   );
-  return { service, prisma, request };
+  return { service, prisma, request, telegram };
 }
 
 describe('PaymentHooksService.payPayment idempotency', () => {
@@ -81,8 +83,8 @@ describe('PaymentHooksService.payPayment idempotency', () => {
     expect(prisma.savedCard.create).not.toHaveBeenCalled();
   });
 
-  it('releases the claim when order creation fails, so a retry can re-run', async () => {
-    const { service, prisma, request } = makeService();
+  it('releases the claim and alerts an operator when order creation fails after capture', async () => {
+    const { service, prisma, request, telegram } = makeService();
     request.mockRejectedValue(new Error('checkout gone'));
 
     const ok = await service.payPayment(PAY_BODY);
@@ -92,5 +94,7 @@ describe('PaymentHooksService.payPayment idempotency', () => {
     expect(prisma.paymentWebhookEvent.deleteMany).toHaveBeenCalledWith({
       where: { idempotencyKey: 'tx_123' },
     });
+    // money captured but no order -> operator alert
+    expect(telegram.sendMessage).toHaveBeenCalledTimes(1);
   });
 });

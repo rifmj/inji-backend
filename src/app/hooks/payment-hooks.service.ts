@@ -8,6 +8,7 @@ import {
   TRANSACTION_CREATE_MUTATION,
 } from './graphql/mutations';
 import { SaleorService } from '../saleor/saleor.service';
+import { TelegramService } from '../messaging/telegram/telegram.service';
 
 /** Prisma raises P2002 when a unique constraint (here idempotencyKey) is hit. */
 function isUniqueConstraintError(error: unknown): boolean {
@@ -22,6 +23,7 @@ export class PaymentHooksService {
     private loggerService: LoggerService,
     private prismaService: PrismaService,
     private saleorService: SaleorService,
+    private telegramService: TelegramService,
   ) {
     this.client = this.saleorService.client;
   }
@@ -83,6 +85,10 @@ export class PaymentHooksService {
       );
     }
 
+    // By the time this "payment succeeded" callback fires, TipTopPay has already
+    // captured the money. If order creation then fails we have money with no
+    // order — track it so the catch can alert an operator to refund.
+    let orderCreated = false;
     try {
       // Create the order FIRST, then persist the card only once the order
       // succeeds — a failed attempt must not leave an orphan saved card.
@@ -99,6 +105,7 @@ export class PaymentHooksService {
       if (!createdOrderId) {
         throw new Error('Failed to create order: No order ID returned');
       }
+      orderCreated = true;
 
       // Record the payment on the order so Saleor shows it as paid. Best-effort:
       // the money is already captured and the order exists, so a failure here is
@@ -120,13 +127,22 @@ export class PaymentHooksService {
       });
 
       if (user) {
-        await this.prismaService.savedCard.create({
-          data: {
-            userId: user.id,
-            cardToken: body.Token,
-            cardLastFour: body.CardLastFour,
-          },
-        });
+        // Best-effort: the order already exists and is paid, so a failure to
+        // remember the card must not fail (and retry) the whole callback.
+        try {
+          await this.prismaService.savedCard.create({
+            data: {
+              userId: user.id,
+              cardToken: body.Token,
+              cardLastFour: body.CardLastFour,
+            },
+          });
+        } catch (cardError) {
+          this.loggerService.error(
+            { error: cardError, userId: user.id, status: 'saveCardError' },
+            'Failed to save card',
+          );
+        }
       }
 
       await this.updateInvoiceStatus(body.InvoiceId, 1);
@@ -143,6 +159,12 @@ export class PaymentHooksService {
         },
         'Failed to process payment',
       );
+
+      // Money is already captured. If the order was never created, this is a
+      // "paid but no order" situation — alert an operator to issue a refund.
+      if (!orderCreated) {
+        await this.alertPaidButNoOrder(body);
+      }
 
       // Release the idempotency claim so a genuine gateway retry can re-run.
       await this.releaseWebhookClaim(idempotencyKey);
@@ -214,6 +236,30 @@ export class PaymentHooksService {
       this.loggerService.error(
         { error, orderId, transactionId },
         'Failed to record Saleor payment',
+      );
+    }
+  }
+
+  /**
+   * Money captured but the order could not be created — notify an operator so
+   * the payment can be refunded manually. Best-effort (never throws).
+   */
+  private async alertPaidButNoOrder(body: {
+    InvoiceId: string;
+    PaymentAmount: string;
+    TransactionId: string;
+  }): Promise<void> {
+    try {
+      await this.telegramService.sendMessage(
+        `⚠️ Оплата прошла, но заказ НЕ создан — требуется возврат.\n` +
+          `TransactionId: ${body.TransactionId}\n` +
+          `Checkout: ${body.InvoiceId}\n` +
+          `Сумма: ${body.PaymentAmount}`,
+      );
+    } catch (error) {
+      this.loggerService.error(
+        { error, InvoiceId: body.InvoiceId, status: 'paidNoOrderAlertFailed' },
+        'Failed to send paid-but-no-order alert',
       );
     }
   }
