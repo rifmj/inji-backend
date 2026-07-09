@@ -30,6 +30,14 @@ interface KaspiInvoiceResultDto {
   error?: string;
 }
 
+/**
+ * Kaspi has no payment API and no paid-callback. By design, this flow only
+ * REQUESTS an invoice (stored here, sent by the phone-automation worker) — it
+ * deliberately never creates or marks-paid a Saleor order. Turning a paid Kaspi
+ * invoice into a Saleor order is a manual operator step, out of this codebase's
+ * scope. So the absence of any orderCreateFromCheckout / markOrderAsPaid call
+ * here is intentional, not a gap (unlike the card and AirbaPay flows).
+ */
 @Controller('kaspi')
 export class KaspiController {
   constructor(private prismaService: PrismaService) {}
