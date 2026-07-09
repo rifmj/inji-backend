@@ -1,22 +1,14 @@
 import { Injectable, Logger, UnauthorizedException } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
-import * as fs from 'fs';
-import * as path from 'path';
+import { ConfigService } from '@nestjs/config';
 
 import * as jwt from 'jsonwebtoken';
 import { PaymentService } from './payment.service';
 import { UpdateOrderStatusByBrokerDto } from './airba-pay.dto';
-import { SaleorService } from '../../saleor/saleor.service';
 import { SaleorSyncService } from '../../saleor/saleor-sync.service';
 
 @Injectable()
 export class AirbapayService {
-  credentials = {
-    userId: '7a40e94f-f688-4f5a-a9fa-20e471164ed0',
-
-    userSecret: 'rkVYH9R2HRdlKwYQ6GfsmKBNl2NMQK2w',
-  };
-
   private readonly logger = new Logger(AirbapayService.name);
 
   tokens?: {
@@ -123,10 +115,21 @@ export class AirbapayService {
     private httpService: HttpService,
     private paymentService: PaymentService,
     private saleorSyncService: SaleorSyncService,
+    private configService: ConfigService,
   ) {}
 
+  private getCredentials(): { userId: string; userSecret: string } {
+    const creds = this.configService.get<{
+      userId?: string;
+      userSecret?: string;
+    }>('payments.airbapay');
+    if (!creds?.userId || !creds?.userSecret) {
+      throw new Error('AirbaPay credentials are not configured');
+    }
+    return { userId: creds.userId, userSecret: creds.userSecret };
+  }
+
   private async authorize() {
-    const THREE_HOURS = 3 * 60 * 60 * 1000; // 3 hours in milliseconds
     const currentTime = new Date().getTime();
 
     const tokenExpired =
@@ -136,16 +139,22 @@ export class AirbapayService {
       const authRequest = await this.httpService
         .post(
           `https://sapi.airbapay.kz/auth/api/v1/authenticate`,
-          this.credentials,
+          this.getCredentials(),
         )
         .toPromise();
 
       if (authRequest?.data?.accessToken) {
+        // Expire slightly before the server's own lifetime rather than a fixed
+        // 3h guess, so we refresh in time. Fall back to ~3h if expiresIn is
+        // missing.
+        const expiresInMs = authRequest.data.expiresIn
+          ? authRequest.data.expiresIn * 1000
+          : 3 * 60 * 60 * 1000;
         this.tokens = {
           accessToken: authRequest.data.accessToken,
           expiresIn: authRequest.data.expiresIn,
           tokenObtainedAt: new Date(),
-          expiresAt: new Date(Date.now() + THREE_HOURS),
+          expiresAt: new Date(Date.now() + expiresInMs - 60_000),
           tokenType: 'bearer',
         };
       }
@@ -254,9 +263,7 @@ export class AirbapayService {
       };
     };
   }) {
-    console.info('Starting auth');
     await this.authorize();
-    console.info('Stopping auth');
     try {
       const paymentPartners = await this.getPaymentPartners();
       const preCreateOrderRequest = await this.httpService
@@ -267,6 +274,10 @@ export class AirbapayService {
           `https://sapi.airbapay.kz/bg-proxy-general/api/v1/order/pre-create`,
           {
             ...body,
+            // Set the callback URL server-side (not from the client) and embed
+            // our shared secret so AirbaPayCallbackGuard can authenticate the
+            // callback that creates the order.
+            callbackUrl: this.buildCallbackUrl(),
             paymentPartners,
           },
           {
@@ -278,9 +289,27 @@ export class AirbapayService {
         .toPromise();
       return preCreateOrderRequest.data;
     } catch (e) {
-      console.info('error', e?.response?.data);
+      this.logger.error(
+        `AirbaPay pre-create failed: ${JSON.stringify(e?.response?.data)}`,
+      );
       return null;
     }
+  }
+
+  /** Callback URL registered with AirbaPay, carrying our shared secret. */
+  private buildCallbackUrl(): string {
+    const origin =
+      this.configService.get<{ originHost?: string }>('common')?.originHost ||
+      'https://api.store.inji.kz';
+    const secret = this.configService.get<string>(
+      'payments.airbapay.callbackSecret',
+    );
+    if (!secret) {
+      this.logger.error('AIRBAPAY_CALLBACK_SECRET is not configured');
+    }
+    return `${origin}/airbapay/payment-callback?token=${encodeURIComponent(
+      secret ?? '',
+    )}`;
   }
 
   public async getPaymentPartners() {

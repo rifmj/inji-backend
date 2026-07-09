@@ -1,5 +1,6 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { HttpModule } from '@nestjs/axios';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../../core/prisma/prisma.service';
 import { AirbapayService } from './airbapay.service';
 import { PaymentService } from './payment.service';
@@ -20,6 +21,7 @@ describe('AirbapayService', () => {
         SaleorSyncService,
         mockPrismaProvider,
         mockSaleorProvider,
+        { provide: ConfigService, useValue: { get: () => undefined } },
         {
           provide: PaymentService,
           useFactory: (prisma: PrismaService) => new PaymentService(prisma),

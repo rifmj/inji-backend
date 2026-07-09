@@ -283,7 +283,7 @@ export class SaleorService {
     return this.query(mutation, { id: orderId });
   }
 
-  async createOrderFromCheckout(checkoutId: string) {
+  async createOrderFromCheckout(checkoutId: string): Promise<string> {
     const createdOrder = await this.client.request(ORDER_CREATE_MUTATION, {
       id: checkoutId,
     });
@@ -297,5 +297,6 @@ export class SaleorService {
     if (!createdOrderId) {
       throw new Error('Failed to create order: No order ID returned');
     }
+    return createdOrderId;
   }
 }

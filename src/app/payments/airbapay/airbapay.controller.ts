@@ -7,8 +7,10 @@ import {
   Param,
   Post,
   Res,
+  UseGuards,
 } from '@nestjs/common';
 import { AirbapayService } from './airbapay.service';
+import { AirbaPayCallbackGuard } from './guards/airbapay-callback.guard';
 import {
   CancelPaymentDto,
   ConfirmPaymentDto,
@@ -157,23 +159,66 @@ export class AirbapayController {
   }
 
   @Post('payment-callback')
+  @UseGuards(AirbaPayCallbackGuard)
   async paymentCallback(
     @Body()
     body: {
+      // We register orderId as the Saleor checkout id in preCreateOrder, so it
+      // comes back here as the checkout id.
       orderId: string;
-      state: 'confirmed';
+      state: string;
       errorMessage?: string;
     },
-    @Headers('Authorization') authHeader: string,
   ) {
+    const { orderId: checkoutId, state } = body;
     this.logger.log(
-      `Payment callback received for order ${body.orderId} with state ${
-        body.state
-      }. Body: ${JSON.stringify(body)}`,
+      `Payment callback for checkout ${checkoutId} with state ${state}. Body: ${JSON.stringify(
+        body,
+      )}`,
     );
 
-    if (body.state === 'confirmed') {
-      await this.saleorService.createOrderFromCheckout(body.orderId);
+    switch (state) {
+      case 'confirmed':
+      case 'completed': {
+        // Orders are created lazily on success. Create it, then mark it paid so
+        // Saleor reflects the AirbaPay settlement (previously it stayed unpaid).
+        const orderId = await this.saleorService.createOrderFromCheckout(
+          checkoutId,
+        );
+        const { orderMarkAsPaid } = await this.saleorService.markOrderAsPaid(
+          orderId,
+        );
+        if (orderMarkAsPaid?.errors?.length) {
+          this.logger.error(
+            `Failed to mark order ${orderId} as paid: ${JSON.stringify(
+              orderMarkAsPaid.errors,
+            )}`,
+          );
+        }
+        break;
+      }
+
+      case 'rejected':
+      case 'declined':
+      case 'customer_cancelled':
+      case 'merchant_cancelled':
+        // No order exists yet (created only on success), so nothing to cancel —
+        // just record the terminal failure.
+        this.logger.log(
+          `AirbaPay payment not completed (state=${state}) for checkout ${checkoutId}`,
+        );
+        break;
+
+      case 'refunded':
+        this.logger.warn(
+          `AirbaPay refund for checkout ${checkoutId} needs manual handling`,
+        );
+        break;
+
+      default:
+        this.logger.warn(
+          `Unhandled AirbaPay state '${state}' for checkout ${checkoutId}`,
+        );
     }
 
     return {

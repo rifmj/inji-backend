@@ -41,6 +41,9 @@ export default () => {
     APPLE_NONCE_TTL_SECONDS,
     TIPTOP_PUBLIC_ID,
     TIPTOP_API_SECRET,
+    AIRBAPAY_USER_ID,
+    AIRBAPAY_USER_SECRET,
+    AIRBAPAY_CALLBACK_SECRET,
   } = process.env;
 
   const appleKeyConfigured = !!(
@@ -136,6 +139,15 @@ export default () => {
       tiptop: {
         publicId: TIPTOP_PUBLIC_ID,
         apiSecret: TIPTOP_API_SECRET,
+      },
+      // AirbaPay (BNPL / installment). userId/userSecret authenticate us to the
+      // AirbaPay API; callbackSecret is our own shared secret embedded in the
+      // callbackUrl we register (and accepted as a Bearer token) so the
+      // payment-callback endpoint can reject forged "confirmed" callbacks.
+      airbapay: {
+        userId: AIRBAPAY_USER_ID,
+        userSecret: AIRBAPAY_USER_SECRET,
+        callbackSecret: AIRBAPAY_CALLBACK_SECRET,
       },
     },
     apple: {
