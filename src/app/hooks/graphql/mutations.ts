@@ -5,6 +5,12 @@ export const ORDER_CREATE_MUTATION = gql`
     orderCreateFromCheckout(id: $id, removeCheckout: true) {
       order {
         id
+        total {
+          gross {
+            amount
+            currency
+          }
+        }
       }
       errors {
         variants

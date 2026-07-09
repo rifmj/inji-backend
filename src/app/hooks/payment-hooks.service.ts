@@ -104,10 +104,13 @@ export class PaymentHooksService {
       // the money is already captured and the order exists, so a failure here is
       // a reconciliation issue to log, not a reason to fail (and retry) the whole
       // callback.
+      const orderTotal = createdOrder.orderCreateFromCheckout?.order?.total
+        ?.gross as { amount?: number; currency?: string } | undefined;
       await this.recordSaleorPayment(
         createdOrderId,
         body.PaymentAmount,
         body.TransactionId,
+        orderTotal,
       );
 
       // AccountId is the Saleor account email we provisioned for the user.
@@ -166,6 +169,7 @@ export class PaymentHooksService {
     orderId: string,
     paymentAmount: string,
     transactionId: string,
+    orderTotal?: { amount?: number; currency?: string },
   ): Promise<void> {
     const amount = parseFloat(paymentAmount);
     if (!Number.isFinite(amount) || amount <= 0) {
@@ -174,6 +178,26 @@ export class PaymentHooksService {
         'Failed to record Saleor payment',
       );
       return;
+    }
+
+    // The charged amount comes from the client-initiated widget; the order total
+    // is computed by Saleor. They should match — flag a mismatch for manual
+    // reconciliation (don't block: the money is already captured).
+    if (
+      typeof orderTotal?.amount === 'number' &&
+      (orderTotal.currency !== 'KZT' ||
+        Math.abs(orderTotal.amount - amount) > 0.5)
+    ) {
+      this.loggerService.error(
+        {
+          orderId,
+          transactionId,
+          charged: amount,
+          orderTotal,
+          status: 'amountMismatch',
+        },
+        'Charged amount does not match the Saleor order total',
+      );
     }
 
     try {

@@ -53,6 +53,23 @@ describe('PaymentHooksService.payPayment idempotency', () => {
     });
   });
 
+  it('logs a mismatch when the charged amount != the order total', async () => {
+    const { service, request } = makeService();
+    const logger = (service as any).loggerService;
+    request.mockResolvedValue({
+      orderCreateFromCheckout: {
+        order: { id: 'ord_1', total: { gross: { amount: 5000, currency: 'KZT' } } },
+      },
+    });
+
+    await service.payPayment(PAY_BODY); // PaymentAmount '1000' != 5000
+
+    expect(logger.error).toHaveBeenCalledWith(
+      expect.objectContaining({ status: 'amountMismatch' }),
+      expect.any(String),
+    );
+  });
+
   it('skips a duplicate callback without creating an order', async () => {
     const { service, prisma, request } = makeService();
     prisma.paymentWebhookEvent.create.mockRejectedValueOnce({ code: 'P2002' });
