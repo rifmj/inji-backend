@@ -5,7 +5,6 @@ import { PrismaService } from '../../../core/prisma/prisma.service';
 import { AirbapayController } from './airbapay.controller';
 import { AirbapayService } from './airbapay.service';
 import { PaymentService } from './payment.service';
-import { SaleorSyncService } from '../../saleor/saleor-sync.service';
 import { AuthGuard } from '../../../core/auth/AuthGuard';
 import { AirbaPayCallbackGuard } from './guards/airbapay-callback.guard';
 import {
@@ -22,7 +21,6 @@ describe('AirbapayController', () => {
       controllers: [AirbapayController],
       providers: [
         AirbapayService,
-        SaleorSyncService,
         mockPrismaProvider,
         mockSaleorProvider,
         { provide: ConfigService, useValue: { get: () => undefined } },
@@ -54,10 +52,16 @@ describe('AirbapayController.paymentCallback', () => {
       markOrderAsPaid: jest
         .fn()
         .mockResolvedValue({ orderMarkAsPaid: { errors: [] } }),
+      isOrderPaid: jest.fn().mockResolvedValue(false),
     };
     const prisma = {
       paymentWebhookEvent: {
         create: jest.fn().mockResolvedValue({}),
+        // Only consulted after a P2002 claim clash; default to an
+        // already-settled row so a duplicate callback simply skips.
+        findUnique: jest
+          .fn()
+          .mockResolvedValue({ status: 'processed', orderId: 'ord_1' }),
         update: jest.fn().mockResolvedValue({}),
         deleteMany: jest.fn().mockResolvedValue({}),
         ...prismaOver,
@@ -72,7 +76,7 @@ describe('AirbapayController.paymentCallback', () => {
     return { controller, saleor, prisma };
   };
 
-  it('creates the order and marks it paid on a confirmed callback', async () => {
+  it('creates the order, persists its id, marks it paid, then settles', async () => {
     const { controller, saleor, prisma } = makeController();
     const res = await controller.paymentCallback({
       orderId: 'chk_1',
@@ -82,19 +86,124 @@ describe('AirbapayController.paymentCallback', () => {
       data: { provider: 'airbapay', idempotencyKey: 'airbapay:chk_1' },
     });
     expect(saleor.createOrderFromCheckout).toHaveBeenCalledWith('chk_1');
+    // order id is persisted before payment so a retry can resume
+    expect(prisma.paymentWebhookEvent.update).toHaveBeenCalledWith({
+      where: { idempotencyKey: 'airbapay:chk_1' },
+      data: { orderId: 'ord_1' },
+    });
     expect(saleor.markOrderAsPaid).toHaveBeenCalledWith('ord_1');
+    expect(prisma.paymentWebhookEvent.update).toHaveBeenCalledWith({
+      where: { idempotencyKey: 'airbapay:chk_1' },
+      data: { status: 'processed' },
+    });
     expect(res).toEqual({ status: 'success' });
   });
 
-  it('skips a duplicate confirmed callback (unique-constraint) without creating an order', async () => {
+  it('skips a duplicate confirmed callback (already settled) without creating an order', async () => {
     const { controller, saleor } = makeController({
       create: jest.fn().mockRejectedValue({ code: 'P2002' }),
+      findUnique: jest
+        .fn()
+        .mockResolvedValue({ status: 'processed', orderId: 'ord_1' }),
     });
     await controller.paymentCallback({
       orderId: 'chk_1',
       state: 'confirmed',
     } as any);
     expect(saleor.createOrderFromCheckout).not.toHaveBeenCalled();
+    expect(saleor.markOrderAsPaid).not.toHaveBeenCalled();
+  });
+
+  it('resumes a prior attempt that created the order but had not paid it', async () => {
+    const { controller, saleor, prisma } = makeController({
+      create: jest.fn().mockRejectedValue({ code: 'P2002' }),
+      findUnique: jest
+        .fn()
+        .mockResolvedValue({ status: 'processing', orderId: 'ord_resumed' }),
+    });
+    await controller.paymentCallback({
+      orderId: 'chk_1',
+      state: 'confirmed',
+    } as any);
+    // does not re-create the (already consumed) checkout...
+    expect(saleor.createOrderFromCheckout).not.toHaveBeenCalled();
+    // ...but pays the persisted order and settles it
+    expect(saleor.markOrderAsPaid).toHaveBeenCalledWith('ord_resumed');
+    expect(prisma.paymentWebhookEvent.update).toHaveBeenCalledWith({
+      where: { idempotencyKey: 'airbapay:chk_1' },
+      data: { status: 'processed' },
+    });
+  });
+
+  it('settles without re-marking when a resumed order is already paid', async () => {
+    const { controller, saleor, prisma } = makeController({
+      create: jest.fn().mockRejectedValue({ code: 'P2002' }),
+      findUnique: jest
+        .fn()
+        .mockResolvedValue({ status: 'processing', orderId: 'ord_paid' }),
+    });
+    saleor.isOrderPaid.mockResolvedValue(true);
+    await controller.paymentCallback({
+      orderId: 'chk_1',
+      state: 'confirmed',
+    } as any);
+    // a prior attempt already paid it — re-marking would error and loop forever
+    expect(saleor.createOrderFromCheckout).not.toHaveBeenCalled();
+    expect(saleor.markOrderAsPaid).not.toHaveBeenCalled();
+    expect(prisma.paymentWebhookEvent.update).toHaveBeenCalledWith({
+      where: { idempotencyKey: 'airbapay:chk_1' },
+      data: { status: 'processed' },
+    });
+  });
+
+  it('asks for retry (does not double-create) when another attempt is in progress', async () => {
+    const { controller, saleor } = makeController({
+      create: jest.fn().mockRejectedValue({ code: 'P2002' }),
+      findUnique: jest
+        .fn()
+        .mockResolvedValue({ status: 'processing', orderId: null }),
+    });
+    await expect(
+      controller.paymentCallback({
+        orderId: 'chk_1',
+        state: 'confirmed',
+      } as any),
+    ).rejects.toThrow();
+    expect(saleor.createOrderFromCheckout).not.toHaveBeenCalled();
+    expect(saleor.markOrderAsPaid).not.toHaveBeenCalled();
+  });
+
+  it('does NOT settle when mark-as-paid fails, so a retry can re-run', async () => {
+    const { controller, saleor, prisma } = makeController();
+    saleor.markOrderAsPaid.mockResolvedValue({
+      orderMarkAsPaid: { errors: [{ field: null, message: 'boom' }] },
+    });
+    await expect(
+      controller.paymentCallback({
+        orderId: 'chk_1',
+        state: 'confirmed',
+      } as any),
+    ).rejects.toThrow();
+    // the order id was persisted, but the row was never flipped to 'processed'
+    expect(prisma.paymentWebhookEvent.update).not.toHaveBeenCalledWith({
+      where: { idempotencyKey: 'airbapay:chk_1' },
+      data: { status: 'processed' },
+    });
+  });
+
+  it('releases the claim if order creation fails (order was not created)', async () => {
+    const { controller, saleor, prisma } = makeController();
+    saleor.createOrderFromCheckout.mockRejectedValue(new Error('saleor down'));
+    await expect(
+      controller.paymentCallback({
+        orderId: 'chk_1',
+        state: 'confirmed',
+      } as any),
+    ).rejects.toThrow();
+    expect(prisma.paymentWebhookEvent.deleteMany).toHaveBeenCalledWith({
+      where: { idempotencyKey: 'airbapay:chk_1' },
+    });
+    expect(saleor.markOrderAsPaid).not.toHaveBeenCalled();
   });
 
   it('does not create or pay an order on a rejected callback', async () => {

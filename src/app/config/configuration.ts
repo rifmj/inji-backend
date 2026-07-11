@@ -44,6 +44,7 @@ export default () => {
     AIRBAPAY_USER_ID,
     AIRBAPAY_USER_SECRET,
     AIRBAPAY_CALLBACK_SECRET,
+    AIRBAPAY_SALES_CODE,
   } = process.env;
 
   const appleKeyConfigured = !!(
@@ -144,10 +145,14 @@ export default () => {
       // AirbaPay API; callbackSecret is our own shared secret embedded in the
       // callbackUrl we register (and accepted as a Bearer token) so the
       // payment-callback endpoint can reject forged "confirmed" callbacks.
+      // salesCode is our merchant code in AirbaPay. It is set server-side (not
+      // trusted from the client) so a tampered request cannot bill a different
+      // merchant. Falls back to the client-sent value when unset.
       airbapay: {
         userId: AIRBAPAY_USER_ID,
         userSecret: AIRBAPAY_USER_SECRET,
         callbackSecret: AIRBAPAY_CALLBACK_SECRET,
+        salesCode: AIRBAPAY_SALES_CODE,
       },
     },
     apple: {

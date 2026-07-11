@@ -1,10 +1,4 @@
-import {
-  HttpException,
-  HttpStatus,
-  Injectable,
-  Logger,
-  LoggerService,
-} from '@nestjs/common';
+import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { GraphQLClient } from 'graphql-request';
 import { ORDER_CREATE_MUTATION } from '../hooks/graphql/mutations';
 
@@ -33,8 +27,9 @@ export class SaleorService {
     variables: Record<string, any> = {},
   ): Promise<any> {
     try {
-      const data = await this.client.request(query, variables);
-      return data.data;
+      // graphql-request v4 `request()` already returns the unwrapped `data`
+      // object (there is no extra `.data` envelope — that is `rawRequest`).
+      return await this.client.request(query, variables);
     } catch (error) {
       throw new HttpException(
         'Ошибка при взаимодействии с Saleor API',
@@ -44,196 +39,76 @@ export class SaleorService {
   }
 
   /**
-   * Получает детали заказа из Saleor по его ID.
-   * @param orderId ID заказа в Saleor.
-   * @returns {Promise<any>} Детали заказа.
+   * Возвращает итоговую сумму (gross) незавершённого checkout в Saleor.
+   * Используется как источник истины для суммы кредита/рассрочки в AirbaPay,
+   * чтобы не доверять сумме, присланной клиентом.
+   *
+   * Клиент присылает GID checkout, а этот Saleor принимает в запросе `checkout`
+   * только `token` (UUID). GID у Checkout — это base64("Checkout:<token>")
+   * (pk = token), поэтому извлекаем токен из GID.
+   * @param checkoutId GID checkout (или сам токен).
+   * @returns {Promise<number | null>} Сумма в валюте магазина или null, если
+   *   checkout не найден / id некорректен.
    */
-  async getOrderDetails(orderId: string): Promise<any> {
+  async getCheckoutTotal(checkoutId: string): Promise<number | null> {
+    const token = this.checkoutTokenFromGid(checkoutId);
+    if (!token) {
+      this.logger.error(
+        `AirbaPay: could not derive checkout token from id "${checkoutId}"`,
+      );
+      return null;
+    }
     const query = `
-      query getOrderDetails($id: ID!) {
-        order(id: $id) {
-          id
-          number
-          total {
+      query CheckoutTotal($token: UUID!) {
+        checkout(token: $token) {
+          totalPrice {
             gross {
               amount
             }
           }
-          user {
-            email
-          }
-          shippingAddress {
-            phone
-            streetAddress1
-            city
-            postalCode
-          }
-          lines {
-            productName
-            variantName
-            quantity
-            unitPrice {
-              gross {
-                amount
-              }
-            }
-            thumbnail {
-              url
-            }
-            variant {
-                sku
-                product {
-                    category {
-                        name
-                    }
-                    attributes {
-                        attribute {
-                            slug
-                        }
-                        values {
-                            name
-                        }
-                    }
-                }
-            }
-          }
         }
       }
     `;
-    return this.query(query, { id: orderId });
+    const data = await this.query(query, { token });
+    const amount = data?.checkout?.totalPrice?.gross?.amount;
+    return typeof amount === 'number' ? amount : null;
   }
 
   /**
-   * Сохраняет ID заявки AirbaPay в метаданных заказа Saleor.
-   * @param orderId ID заказа в Saleor.
-   * @param airbaOrderId ID заявки в AirbaPay.
+   * Извлекает токен (UUID) из GID checkout. Saleor GID = base64("Checkout:<pk>"),
+   * а pk у Checkout и есть его токен. Если на вход пришёл уже «сырой» токен —
+   * возвращаем его как есть.
    */
-  async updateOrderMetadata(
-    orderId: string,
-    airbaOrderId: string,
-  ): Promise<void> {
+  private checkoutTokenFromGid(idOrToken: string): string | null {
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!idOrToken) return null;
+    if (uuid.test(idOrToken)) return idOrToken;
+    try {
+      const decoded = Buffer.from(idOrToken, 'base64').toString('utf8');
+      const [type, token] = decoded.split(':');
+      if (type === 'Checkout' && uuid.test(token)) return token;
+    } catch {
+      // fall through
+    }
+    return null;
+  }
+
+  /**
+   * Возвращает, помечен ли заказ как оплаченный. Используется для
+   * идемпотентности: при повторной обработке callback позволяет не помечать
+   * оплату второй раз (Saleor вернул бы ошибку на уже оплаченном заказе).
+   * @param orderId GID заказа.
+   */
+  async isOrderPaid(orderId: string): Promise<boolean> {
     const query = `
-      mutation updateMeta($id: ID!, $input: [MetadataInput!]!) {
-        updateMetadata(id: $id, input: $input) {
-          item {
-            metadata {
-              key
-              value
-            }
-          }
-          errors {
-            field
-            message
-          }
+      query OrderIsPaid($id: ID!) {
+        order(id: $id) {
+          isPaid
         }
       }
     `;
-    await this.query(query, {
-      id: orderId,
-      input: [{ key: 'airbaPayOrderId', value: airbaOrderId }],
-    });
-    this.logger.log(
-      `Метаданные для заказа Saleor ${orderId} обновлены: airbaPayOrderId=${airbaOrderId}`,
-    );
-  }
-
-  /**
-   * Создает транзакцию (платеж) для заказа в Saleor.
-   * @param orderId ID заказа Saleor.
-   * @param amount Сумма платежа.
-   * @param pspReference Ссылка на транзакцию в платежной системе.
-   * @returns {Promise<any>}
-   */
-  async createPaymentTransaction(
-    orderId: string,
-    amount: number,
-    pspReference: string,
-  ): Promise<any> {
-    const query = `
-      mutation transactionCreate($id: ID!, $transaction: TransactionCreateInput!) {
-        transactionCreate(id: $id, transaction: $transaction) {
-          transaction {
-            id
-            pspReference
-          }
-          errors {
-            field
-            message
-          }
-        }
-      }
-    `;
-
-    return this.query(query, {
-      id: orderId,
-      transaction: {
-        type: 'AUTHORIZATION',
-        amount: amount,
-        pspReference: pspReference,
-        name: 'Airba Pay',
-      },
-    });
-  }
-
-  /**
-   * Обновляет приватные метаданные объекта в Saleor.
-   * @param objectId GID объекта (заказа).
-   * @param key Ключ метаданных.
-   * @param value Значение.
-   */
-  async updatePrivateMetadata(
-    objectId: string,
-    key: string,
-    value: string,
-  ): Promise<void> {
-    const mutation = `
-      mutation updatePrivateMeta($id: ID!, $key: String!, $value: String!) {
-        updatePrivateMetadata(id: $id, input: [{key: $key, value: $value}]) {
-          item {
-            privateMetadata {
-              key
-              value
-            }
-          }
-          errors {
-            field
-            message
-            code
-          }
-        }
-      }
-    `;
-    await this.query(mutation, { id: objectId, key, value });
-    this.logger.log(
-      `Приватные метаданные для ${objectId} обновлены: ${key}=${value}`,
-    );
-  }
-
-  /**
-   * Находит заказы по значению в приватных метаданных.
-   * @param key Ключ для поиска.
-   * @param value Значение для поиска.
-   * @returns {Promise<any>} Найденные заказы.
-   */
-  async findOrdersByPrivateMetadata(key: string, value: string): Promise<any> {
-    const query = `
-      query OrdersByMetadata($filter: OrderFilterInput!) {
-        orders(first: 1, filter: $filter) {
-          edges {
-            node {
-              id
-              number
-              status
-            }
-          }
-        }
-      }
-    `;
-    return this.query(query, {
-      filter: {
-        privateMetadata: [{ key, value }],
-      },
-    });
+    const data = await this.query(query, { id: orderId });
+    return data?.order?.isPaid === true;
   }
 
   /**
@@ -248,29 +123,6 @@ export class SaleorService {
             id
             status
             isPaid
-          }
-          errors {
-            field
-            message
-            code
-          }
-        }
-      }
-    `;
-    return this.query(mutation, { id: orderId });
-  }
-
-  /**
-   * Отменяет заказ.
-   * @param orderId GID заказа.
-   */
-  async cancelOrder(orderId: string): Promise<any> {
-    const mutation = `
-      mutation OrderCancel($id: ID!) {
-        orderCancel(id: $id) {
-          order {
-            id
-            status
           }
           errors {
             field

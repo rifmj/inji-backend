@@ -8,7 +8,6 @@ import { CommonModule } from '../core/common/common.module';
 import { SaleorModule } from './saleor/saleor.module';
 import { RemoteConfigModule } from './remote-config/remote-config.module';
 import { DeliveryModule } from './delivery/delivery.module';
-import { OrderModule } from './order/order.module';
 
 @Module({
   imports: [
@@ -21,7 +20,6 @@ import { OrderModule } from './order/order.module';
     SaleorModule,
     RemoteConfigModule,
     DeliveryModule,
-    OrderModule,
   ],
 })
 export class AppModule {}

@@ -241,6 +241,11 @@ model PaymentWebhookEvent {
   // Gateway idempotency key — TipTopPay TransactionId (falls back to InvoiceId).
   idempotencyKey String   @unique
   status         String   @default("processing") // processing | processed
+  // Saleor order id created while handling this callback. Persisted so a retry
+  // that failed AFTER creating the order (e.g. mark-as-paid failed) can resume
+  // by paying the existing order instead of re-creating it — the checkout is
+  // consumed on order creation (removeCheckout: true) and cannot be recreated.
+  orderId        String?
 
   @@index([idempotencyKey])
 }

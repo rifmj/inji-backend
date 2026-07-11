@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
 import { ConfigService } from '@nestjs/config';
+import { SaleorService } from '../../saleor/saleor.service';
 
 @Injectable()
 export class AirbapayService {
@@ -109,6 +110,7 @@ export class AirbapayService {
   constructor(
     private httpService: HttpService,
     private configService: ConfigService,
+    private saleorService: SaleorService,
   ) {}
 
   private getCredentials(): { userId: string; userSecret: string } {
@@ -256,6 +258,39 @@ export class AirbapayService {
       };
     };
   }) {
+    // Server-authoritative amount: a loan/installment application must not
+    // trust the client's totalCost/goods prices. body.orderId is the Saleor
+    // checkout id we registered, so derive the real total from it. Reject if the
+    // checkout is missing (no total to lend against).
+    let checkoutTotal: number | null = null;
+    try {
+      checkoutTotal = await this.saleorService.getCheckoutTotal(body.orderId);
+    } catch (e) {
+      this.logger.error(
+        `AirbaPay pre-create: failed to load checkout ${body.orderId}: ${e}`,
+      );
+    }
+    if (checkoutTotal == null || checkoutTotal <= 0) {
+      this.logger.error(
+        `AirbaPay pre-create rejected: checkout ${body.orderId} not found or has non-positive total (${checkoutTotal})`,
+      );
+      return null;
+    }
+    if (
+      typeof body.totalCost === 'number' &&
+      Math.abs(body.totalCost - checkoutTotal) > 0.5
+    ) {
+      this.logger.warn(
+        `AirbaPay totalCost mismatch for checkout ${body.orderId}: client=${body.totalCost} server=${checkoutTotal}; using server value`,
+      );
+    }
+
+    // salesCode identifies our merchant to AirbaPay — take it from config, not
+    // the client. Fall back to the client value only if unconfigured.
+    const salesCode =
+      this.configService.get<string>('payments.airbapay.salesCode') ||
+      body.salesCode;
+
     await this.authorize();
     try {
       const paymentPartners = await this.getPaymentPartners();
@@ -272,6 +307,9 @@ export class AirbapayService {
             // callback that creates the order.
             callbackUrl: this.buildCallbackUrl(),
             paymentPartners,
+            // Server-side overrides of client-supplied money/identity fields.
+            totalCost: checkoutTotal,
+            salesCode,
           },
           {
             headers: {
