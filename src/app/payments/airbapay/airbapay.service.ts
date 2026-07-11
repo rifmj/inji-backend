@@ -291,6 +291,25 @@ export class AirbapayService {
       this.configService.get<string>('payments.airbapay.salesCode') ||
       body.salesCode;
 
+    // AirbaPay requires the customer phone as a top-level `mobile` (10 digits,
+    // format 7771234567). The mobile client only sends it nested under
+    // customer.contact, so AirbaPay was rejecting every pre-order with
+    // "Указан некорректный номер телефона клиента". Derive + normalize it here
+    // and populate both places. Masked log (no full number) to confirm format.
+    const rawMobile = body.mobile || body.customer?.contact?.mobile;
+    const mobile = this.normalizeKzMobile(rawMobile);
+    this.logger.log(
+      `AirbaPay pre-create: mobile present=${!!rawMobile} normalizedLen=${
+        mobile?.length ?? 0
+      } head=${mobile?.slice(0, 1) ?? '-'}`,
+    );
+    if (!mobile) {
+      this.logger.error(
+        `AirbaPay pre-create rejected: missing/invalid customer mobile (raw present=${!!rawMobile})`,
+      );
+      return null;
+    }
+
     await this.authorize();
     try {
       const paymentPartners = await this.getPaymentPartners();
@@ -310,6 +329,12 @@ export class AirbapayService {
             // Server-side overrides of client-supplied money/identity fields.
             totalCost: checkoutTotal,
             salesCode,
+            // Phone at the top level (required) AND nested, normalized.
+            mobile,
+            customer: {
+              ...body.customer,
+              contact: { ...body.customer?.contact, mobile },
+            },
           },
           {
             headers: {
@@ -325,6 +350,21 @@ export class AirbapayService {
       );
       return null;
     }
+  }
+
+  /**
+   * Normalize a KZ phone to the 10-digit national form AirbaPay expects
+   * (e.g. 7771234567). Strips formatting and drops a leading country digit
+   * (+7 / 8...). Returns null if the result isn't exactly 10 digits.
+   */
+  private normalizeKzMobile(raw?: string): string | null {
+    if (!raw) return null;
+    const digits = String(raw).replace(/\D/g, '');
+    const national =
+      digits.length === 11 && (digits[0] === '7' || digits[0] === '8')
+        ? digits.slice(1)
+        : digits;
+    return national.length === 10 ? national : null;
   }
 
   /** Callback URL registered with AirbaPay, carrying our shared secret. */

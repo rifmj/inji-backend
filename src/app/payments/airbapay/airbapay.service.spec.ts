@@ -122,4 +122,44 @@ describe('AirbapayService.preCreateOrder (server-authoritative amount)', () => {
       posts.find((p) => p.url.includes('/order/pre-create')),
     ).toBeUndefined();
   });
+
+  it('derives the required top-level mobile from customer.contact when the client omits it', async () => {
+    const { service, posts } = makeService();
+    // the mobile client sends the phone ONLY nested — this used to reach AirbaPay
+    // without a top-level `mobile` and get rejected as "invalid customer phone".
+    await service.preCreateOrder({
+      orderId: 'chk_1',
+      totalCost: 1000,
+      goods: [],
+      customer: { contact: { mobile: '7001234567' } },
+    } as any);
+    const preCreate = posts.find((p) => p.url.includes('/order/pre-create'));
+    expect(preCreate.body.mobile).toBe('7001234567');
+    expect(preCreate.body.customer.contact.mobile).toBe('7001234567');
+  });
+
+  it('normalizes an 11-digit +7 phone to the 10-digit form AirbaPay expects', async () => {
+    const { service, posts } = makeService();
+    await service.preCreateOrder({
+      orderId: 'chk_1',
+      totalCost: 1000,
+      goods: [],
+      mobile: '+7 700 123 45 67',
+    } as any);
+    const preCreate = posts.find((p) => p.url.includes('/order/pre-create'));
+    expect(preCreate.body.mobile).toBe('7001234567');
+  });
+
+  it('rejects (returns null) when no usable phone is present anywhere', async () => {
+    const { service, posts } = makeService();
+    const res = await service.preCreateOrder({
+      orderId: 'chk_1',
+      totalCost: 1000,
+      goods: [],
+    } as any);
+    expect(res).toBeNull();
+    expect(
+      posts.find((p) => p.url.includes('/order/pre-create')),
+    ).toBeUndefined();
+  });
 });
