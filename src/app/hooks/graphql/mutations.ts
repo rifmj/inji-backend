@@ -66,4 +66,36 @@ export const GET_CHECKOUT_QUERY = gql`
       isShippingRequired
     }
   }
-`; 
+`;
+
+// Идентификатор Keruen хранится в метаданных аккаунта покупателя. Читаем его с
+// заказа (а не принимаем от клиента), поэтому это работает для любой версии
+// мобильного приложения, включая старые сборки.
+export const ORDER_CUSTOMER_KER_ID_QUERY = gql`
+  query OrderCustomerKerId($id: ID!) {
+    order(id: $id) {
+      user {
+        metadata {
+          key
+          value
+        }
+      }
+    }
+  }
+`;
+
+// Проставляет kerId на самом заказе: значение фиксируется на момент покупки и
+// остаётся в заказе, даже если покупатель потом поменяет его в профиле.
+// `orderCreateFromCheckout` не принимает metadata аргументом, поэтому это
+// отдельная мутация после создания заказа.
+export const ORDER_UPDATE_METADATA_MUTATION = gql`
+  mutation OrderUpdateMetadata($id: ID!, $input: [MetadataInput!]!) {
+    updateMetadata(id: $id, input: $input) {
+      errors {
+        field
+        code
+        message
+      }
+    }
+  }
+`;

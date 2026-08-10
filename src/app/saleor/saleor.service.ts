@@ -1,6 +1,10 @@
 import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
 import { GraphQLClient } from 'graphql-request';
-import { ORDER_CREATE_MUTATION } from '../hooks/graphql/mutations';
+import {
+  ORDER_CREATE_MUTATION,
+  ORDER_CUSTOMER_KER_ID_QUERY,
+  ORDER_UPDATE_METADATA_MUTATION,
+} from '../hooks/graphql/mutations';
 
 @Injectable()
 export class SaleorService {
@@ -149,6 +153,53 @@ export class SaleorService {
     if (!createdOrderId) {
       throw new Error('Failed to create order: No order ID returned');
     }
+    await this.stampCustomerKerId(createdOrderId);
     return createdOrderId;
+  }
+
+  /**
+   * Копирует идентификатор Keruen из метаданных покупателя в метаданные заказа.
+   *
+   * Мутация `orderCreateFromCheckout` не принимает metadata, поэтому это
+   * отдельный шаг после создания заказа.
+   *
+   * Best-effort и никогда не бросает: к моменту вызова заказ уже создан, а в
+   * карточном потоке деньги уже списаны — падение здесь означало бы повторную
+   * обработку callback'а и дубль заказа. Любая ошибка — это лог, а не исключение.
+   * @param orderId GID заказа.
+   */
+  async stampCustomerKerId(orderId: string): Promise<void> {
+    try {
+      const data = await this.client.request(ORDER_CUSTOMER_KER_ID_QUERY, {
+        id: orderId,
+      });
+      const metadata: { key?: string; value?: string }[] =
+        data?.order?.user?.metadata ?? [];
+      const kerId = metadata.find((m) => m?.key === 'kerId')?.value;
+
+      if (!kerId) {
+        this.logger.warn(
+          `Order ${orderId}: customer has no kerId in Saleor metadata, nothing to stamp`,
+        );
+        return;
+      }
+
+      const res = await this.client.request(ORDER_UPDATE_METADATA_MUTATION, {
+        id: orderId,
+        input: [{ key: 'kerId', value: kerId }],
+      });
+      // Saleor отдаёт ошибки прав/валидации в payload, а не как GraphQL error.
+      const errors = res?.updateMetadata?.errors ?? [];
+      if (errors.length) {
+        const reason = JSON.stringify(errors);
+        this.logger.error(`Order ${orderId}: kerId not stamped: ${reason}`);
+        return;
+      }
+      this.logger.log(`Order ${orderId}: kerId stamped`);
+    } catch (error) {
+      this.logger.error(
+        `Order ${orderId}: failed to stamp kerId: ${(error as Error)?.message}`,
+      );
+    }
   }
 }

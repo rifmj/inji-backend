@@ -107,6 +107,10 @@ export class PaymentHooksService {
       }
       orderCreated = true;
 
+      // Stamp the buyer's Keruen id onto the order. Best-effort by design (see
+      // SaleorService.stampCustomerKerId) — it must never fail this callback.
+      await this.saleorService.stampCustomerKerId(createdOrderId);
+
       // Record the payment on the order so Saleor shows it as paid. Best-effort:
       // the money is already captured and the order exists, so a failure here is
       // a reconciliation issue to log, not a reason to fail (and retry) the whole
